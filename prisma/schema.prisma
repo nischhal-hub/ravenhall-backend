@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum LaneType {
+  BATTING
+  BOWLING
+  GENERAL
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum MembershipPlan {
+  CASUAL
+  MONTHLY
+  ANNUAL
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+
+model User {
+  id               String       @id @default(cuid())
+  email            String       @unique
+  password         String
+  firstName        String
+  lastName         String
+  phone            String?
+  role             Role         @default(CUSTOMER)
+  isEmailVerified  Boolean      @default(false)
+  emailVerifyToken String?
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  refreshTokens    RefreshToken[]
+  bookings         Booking[]
+  membership       Membership?
+  notifications    Notification[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([email])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Lane {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  type        LaneType
+  description String?
+  capacity    Int       @default(6)
+  hourlyRate  Float
+  imageUrl    String?
+  isActive    Boolean   @default(true)
+  slots       TimeSlot[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([type, isActive])
+}
+
+model TimeSlot {
+  id          String        @id @default(cuid())
+  laneId      String
+  lane        Lane          @relation(fields: [laneId], references: [id], onDelete: Cascade)
+  date        DateTime      @db.Date
+  startTime   String        // HH:mm
+  endTime     String        // HH:mm
+  isAvailable Boolean       @default(true)
+  isBlocked   Boolean       @default(false)
+  bookingItems BookingItem[]
+  createdAt   DateTime      @default(now())
+
+  @@unique([laneId, date, startTime])
+  @@index([laneId, date])
+  @@index([date, isAvailable])
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  bookingRef    String        @unique  // RIC-2026-XXXXX
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  status        BookingStatus @default(PENDING)
+  totalAmount   Float
+  discountAmount Float        @default(0)
+  finalAmount   Float
+  notes         String?
+  items         BookingItem[]
+  payment       Payment?
+  discountCode  DiscountCode? @relation(fields: [discountCodeId], references: [id])
+  discountCodeId String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@index([bookingRef])
+}
+
+model BookingItem {
+  id        String   @id @default(cuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  slotId    String
+  slot      TimeSlot @relation(fields: [slotId], references: [id])
+  unitPrice Float
+  subtotal  Float
+  createdAt DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([slotId])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  bookingId             String        @unique
+  booking               Booking       @relation(fields: [bookingId], references: [id])
+  stripePaymentIntentId String        @unique
+  amount                Float
+  currency              String        @default("aud")
+  status                PaymentStatus @default(PENDING)
+  refundAmount          Float?
+  stripeRefundId        String?
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([stripePaymentIntentId])
+}
+
+model Membership {
+  id          String         @id @default(cuid())
+  userId      String         @unique
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan        MembershipPlan
+  discountPct Float
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, isActive])
+}
+
+model DiscountCode {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  description String?
+  discountPct Float
+  maxUses     Int?
+  usedCount   Int       @default(0)
+  validFrom   DateTime
+  validTo     DateTime
+  isActive    Boolean   @default(true)
+  bookings    Booking[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([code, isActive])
+}
+
+model Notification {
+  id        String             @id @default(cuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id])
+  type      NotificationType
+  subject   String
+  body      String
+  status    NotificationStatus @default(QUEUED)
+  sentAt    DateTime?
+  createdAt DateTime           @default(now())
+
+  @@index([userId])
+}

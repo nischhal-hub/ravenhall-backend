@@ -37,7 +37,7 @@ export const login = async (
       sameSite: "none",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
-    sendSuccess(res, { user, accessToken }, "Login successful");
+    sendSuccess(res, { user, accessToken, refreshToken }, "Login successful");
   } catch (error) {
     next(error);
   }

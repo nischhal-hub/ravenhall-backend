@@ -1,32 +1,21 @@
-import { PrismaClient } from "@prisma/client";
-import { logger } from "./logger";
+import { PrismaClient } from '@prisma/client';
 
 declare global {
   // eslint-disable-next-line no-var
   var __prisma: PrismaClient | undefined;
 }
 
-export const prisma =
-  globalThis.__prisma ||
+const createPrismaClient = () =>
   new PrismaClient({
     log:
-      process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
-        : ["error"],
+      process.env.NODE_ENV === 'development'
+        ? ['error', 'warn'] // ❌ removed "query"
+        : ['error'],
   });
 
-if (process.env.NODE_ENV !== "production") {
+export const prisma = globalThis.__prisma ?? createPrismaClient();
+
+// Prevent multiple instances in dev (hot reload fix)
+if (process.env.NODE_ENV !== 'production') {
   globalThis.__prisma = prisma;
 }
-
-prisma.$use(async (params, next) => {
-  const before = Date.now();
-  const result = await next(params);
-  const after = Date.now();
-  if (process.env.NODE_ENV === "development") {
-    logger.debug(
-      `Prisma ${params.model}.${params.action} took ${after - before}ms`,
-    );
-  }
-  return result;
-});

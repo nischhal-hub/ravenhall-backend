@@ -1,5 +1,5 @@
-import { Router } from "express";
-import type { Router as ExpressRouter } from "express";
+import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import {
   getAllBookings,
   updateBookingStatus,
@@ -14,8 +14,9 @@ import {
   createDiscountCode,
   getAllDiscountCodes,
   updateDiscountCode,
-} from "./admin.controller";
-import { authenticate, requireRole } from "../../middleware/auth.middleware";
+  getDashboardData,
+} from './admin.controller';
+import { authenticate, requireRole } from '../../middleware/auth.middleware';
 
 const router: ExpressRouter = Router();
 
@@ -23,32 +24,34 @@ const router: ExpressRouter = Router();
 router.use(authenticate);
 
 // ── Bookings ──────────────────────────────────────────────────────────────
-router.get("/bookings", requireRole("ADMIN", "STAFF"), getAllBookings);
+router.get('/bookings', requireRole('ADMIN', 'STAFF'), getAllBookings);
 router.patch(
-  "/bookings/:id/status",
-  requireRole("ADMIN", "STAFF"),
+  '/bookings/:id/status',
+  requireRole('ADMIN', 'STAFF'),
   updateBookingStatus,
 );
 
 // ── Lanes ─────────────────────────────────────────────────────────────────
-router.post("/lanes", requireRole("ADMIN"), createLane);
-router.put("/lanes/:id", requireRole("ADMIN", "STAFF"), updateLane);
-router.delete("/lanes/:id", requireRole("ADMIN"), deleteLane);
+router.post('/lanes', requireRole('ADMIN'), createLane);
+router.put('/lanes/:id', requireRole('ADMIN', 'STAFF'), updateLane);
+router.delete('/lanes/:id', requireRole('ADMIN'), deleteLane);
 
 // ── Slots ─────────────────────────────────────────────────────────────────
-router.post("/slots/block", requireRole("ADMIN", "STAFF"), blockSlots);
-router.post("/slots/unblock", requireRole("ADMIN", "STAFF"), unblockSlots);
+router.post('/slots/block', requireRole('ADMIN', 'STAFF'), blockSlots);
+router.post('/slots/unblock', requireRole('ADMIN', 'STAFF'), unblockSlots);
 
 // ── Reports ───────────────────────────────────────────────────────────────
-router.get("/reports/revenue", requireRole("ADMIN"), getRevenueReport);
+router.get('/reports/revenue', requireRole('ADMIN'), getRevenueReport);
 
 // ── Users ─────────────────────────────────────────────────────────────────
-router.get("/users", requireRole("ADMIN"), getAllUsers);
-router.patch("/users/:id/role", requireRole("ADMIN"), updateUserRole);
+router.get('/users', requireRole('ADMIN'), getAllUsers);
+router.patch('/users/:id/role', requireRole('ADMIN'), updateUserRole);
 
 // ── Discount codes ────────────────────────────────────────────────────────
-router.post("/discounts", requireRole("ADMIN"), createDiscountCode);
-router.get("/discounts", requireRole("ADMIN", "STAFF"), getAllDiscountCodes);
-router.patch("/discounts/:id", requireRole("ADMIN"), updateDiscountCode);
+router.post('/discounts', requireRole('ADMIN'), createDiscountCode);
+router.get('/discounts', requireRole('ADMIN', 'STAFF'), getAllDiscountCodes);
+router.patch('/discounts/:id', requireRole('ADMIN'), updateDiscountCode);
+
+router.get('/dashboard', requireRole('ADMIN'), getDashboardData);
 
 export default router;

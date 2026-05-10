@@ -107,3 +107,10 @@ export const updateDiscountCode = async (req: Request, res: Response, next: Next
     sendSuccess(res, code);
   } catch (error) { next(error); }
 };
+
+export const getDashboardData = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await adminService.getDashboardData(req, res);
+    sendSuccess(res, data);
+  } catch (error) { next(error); }
+};

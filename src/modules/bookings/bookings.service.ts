@@ -1,16 +1,16 @@
-import { prisma } from "../../config/database";
-import { AppError } from "../../utils/AppError";
-import { generateBookingRef } from "../../utils/bookingRef";
-import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
-import { stripe } from "../../config/stripe";
-import { EmailService } from "../notifications/email.service";
+import { prisma } from '../../config/database';
+import { AppError } from '../../utils/AppError';
+import { generateBookingRef } from '../../utils/bookingRef';
+import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
+import { stripe } from '../../config/stripe';
+import { EmailService } from '../notifications/email.service';
 
 const emailService = new EmailService();
 
 export class BookingsService {
   async createBooking(
     userId: string,
-    data: { slotId: string; discountCode?: string }
+    data: { slotId: string; discountCode?: string },
   ) {
     return prisma.$transaction(async (tx) => {
       // Lock the slot row to prevent race conditions
@@ -19,9 +19,9 @@ export class BookingsService {
         include: { lane: true },
       });
 
-      if (!slot) throw new AppError("Time slot not found", 404);
+      if (!slot) throw new AppError('Time slot not found', 404);
       if (!slot.isAvailable || slot.isBlocked) {
-        throw new AppError("This slot is no longer available", 409);
+        throw new AppError('This slot is no longer available', 409);
       }
 
       // Check membership discount
@@ -42,7 +42,8 @@ export class BookingsService {
           discountCodeRecord.isActive &&
           discountCodeRecord.validFrom <= new Date() &&
           discountCodeRecord.validTo >= new Date() &&
-          (!discountCodeRecord.maxUses || discountCodeRecord.usedCount < discountCodeRecord.maxUses)
+          (!discountCodeRecord.maxUses ||
+            discountCodeRecord.usedCount < discountCodeRecord.maxUses)
         ) {
           discountPct = Math.max(discountPct, discountCodeRecord.discountPct);
         }
@@ -92,7 +93,33 @@ export class BookingsService {
       return booking;
     });
   }
+  async getAllBookings(pagination: PaginationParams) {
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        include: {
+          user: true, // include user info (important for admin view)
+          items: {
+            include: {
+              slot: {
+                include: { lane: true },
+              },
+            },
+          },
+          payment: true,
+          discountCode: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: pagination.skip,
+        take: pagination.limit,
+      }),
+      prisma.booking.count(),
+    ]);
 
+    return {
+      bookings,
+      meta: buildPaginationMeta(total, pagination.page, pagination.limit),
+    };
+  }
   async getMyBookings(userId: string, pagination: PaginationParams) {
     const [bookings, total] = await Promise.all([
       prisma.booking.findMany({
@@ -101,7 +128,7 @@ export class BookingsService {
           items: { include: { slot: { include: { lane: true } } } },
           payment: true,
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
         take: pagination.limit,
       }),
@@ -114,16 +141,17 @@ export class BookingsService {
     };
   }
 
-  async getBookingById(id: string, userId: string) {
+  async getBookingById(id: string) {
     const booking = await prisma.booking.findFirst({
-      where: { id, userId },
+      where: { id },
       include: {
         items: { include: { slot: { include: { lane: true } } } },
         payment: true,
+        user: true,
         discountCode: true,
       },
     });
-    if (!booking) throw new AppError("Booking not found", 404);
+    if (!booking) throw new AppError('Booking not found', 404);
     return booking;
   }
 
@@ -133,9 +161,11 @@ export class BookingsService {
       include: { items: true, payment: true },
     });
 
-    if (!booking) throw new AppError("Booking not found", 404);
-    if (booking.status === "CANCELLED") throw new AppError("Booking already cancelled", 400);
-    if (booking.status === "COMPLETED") throw new AppError("Cannot cancel a completed booking", 400);
+    if (!booking) throw new AppError('Booking not found', 404);
+    if (booking.status === 'CANCELLED')
+      throw new AppError('Booking already cancelled', 400);
+    if (booking.status === 'COMPLETED')
+      throw new AppError('Cannot cancel a completed booking', 400);
 
     return prisma.$transaction(async (tx) => {
       // Restore slot availability
@@ -146,23 +176,29 @@ export class BookingsService {
       });
 
       // Process refund if payment exists
-      if (booking.payment?.stripePaymentIntentId && booking.payment.status === "SUCCEEDED") {
+      if (
+        booking.payment?.stripePaymentIntentId &&
+        booking.payment.status === 'SUCCEEDED'
+      ) {
         await stripe.refunds.create({
           payment_intent: booking.payment.stripePaymentIntentId,
         });
         await tx.payment.update({
           where: { id: booking.payment.id },
-          data: { status: "REFUNDED" },
+          data: { status: 'REFUNDED' },
         });
       }
 
       const updated = await tx.booking.update({
         where: { id },
-        data: { status: "CANCELLED" },
+        data: { status: 'CANCELLED' },
         include: { items: { include: { slot: { include: { lane: true } } } } },
       });
 
-      await emailService.sendBookingCancellation(booking.userId, booking.bookingRef);
+      await emailService.sendBookingCancellation(
+        booking.userId,
+        booking.bookingRef,
+      );
       return updated;
     });
   }

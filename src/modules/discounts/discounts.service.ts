@@ -1,4 +1,4 @@
-import { prisma } from "../../config/database";
+import { prisma } from '../../config/database';
 
 export class DiscountsService {
   async validateCode(code: string) {
@@ -13,7 +13,11 @@ export class DiscountsService {
       discount.validTo < new Date() ||
       (discount.maxUses !== null && discount.usedCount >= discount.maxUses)
     ) {
-      return { valid: false, message: "Invalid or expired discount code", discountPct: 0 };
+      return {
+        valid: false,
+        message: 'Invalid or expired discount code',
+        discountPct: 0,
+      };
     }
 
     return {

@@ -55,13 +55,11 @@ export const getBookingById = async (
   next: NextFunction,
 ) => {
   try {
-    console.log(
-      'Fetching booking with ID:',
+    console;
+    const booking = await bookingsService.getBookingById(
       req.params.id,
-      'for user:',
       req.user!.id,
     );
-    const booking = await bookingsService.getBookingById(req.params.id);
     sendSuccess(res, booking);
   } catch (error) {
     next(error);
@@ -79,6 +77,19 @@ export const cancelBooking = async (
       req.user!.id,
     );
     sendSuccess(res, booking, 'Booking cancelled successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteBooking = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await bookingsService.deleteBooking(req.params.id);
+    sendSuccess(res, result, 'Booking deleted successfully');
   } catch (error) {
     next(error);
   }

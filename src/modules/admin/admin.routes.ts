@@ -15,6 +15,7 @@ import {
   getAllDiscountCodes,
   updateDiscountCode,
   getDashboardData,
+  deleteDiscountCode,
 } from './admin.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
 
@@ -51,6 +52,7 @@ router.patch('/users/:id/role', requireRole('ADMIN'), updateUserRole);
 router.post('/discounts', requireRole('ADMIN'), createDiscountCode);
 router.get('/discounts', requireRole('ADMIN', 'STAFF'), getAllDiscountCodes);
 router.patch('/discounts/:id', requireRole('ADMIN'), updateDiscountCode);
+router.delete('/discounts/:id', requireRole('ADMIN'), deleteDiscountCode);
 
 router.get('/dashboard', requireRole('ADMIN'), getDashboardData);
 

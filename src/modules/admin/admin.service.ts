@@ -233,7 +233,11 @@ export class AdminService {
   ) {
     return prisma.discountCode.update({ where: { id }, data });
   }
-
+  async deleteDiscountCode(id: string) {
+    return prisma.discountCode.delete({
+      where: { id },
+    });
+  }
   async getDashboardData(): Promise<DashboardData> {
     try {
       const now = new Date();
@@ -313,7 +317,9 @@ export class AdminService {
           by: ['userId'],
           _sum: { finalAmount: true },
           _count: { id: true },
-          where: { status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] } },
+          where: {
+            status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
+          },
           orderBy: { _sum: { finalAmount: 'desc' } },
           take: 5,
         }),
@@ -372,10 +378,13 @@ export class AdminService {
       };
 
       // ── Build Lane Stats ─────────────────────────────────────
-      const laneTypeMap = lanesByType.reduce<Record<string, number>>((acc, l) => {
-        acc[l.type] = l._count.id;
-        return acc;
-      }, {});
+      const laneTypeMap = lanesByType.reduce<Record<string, number>>(
+        (acc, l) => {
+          acc[l.type] = l._count.id;
+          return acc;
+        },
+        {},
+      );
 
       const laneStats: LaneStats = {
         total: totalLanes,
@@ -390,7 +399,7 @@ export class AdminService {
           acc[m.plan] = m._count.id;
           return acc;
         },
-        {}
+        {},
       );
 
       const membershipStats: MembershipStats = {

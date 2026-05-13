@@ -202,4 +202,47 @@ export class BookingsService {
       return updated;
     });
   }
+  async deleteBooking(id: string) {
+    const booking = await prisma.booking.findFirst({
+      where: { id },
+      include: {
+        items: true,
+        payment: true,
+      },
+    });
+
+    if (!booking) throw new AppError('Booking not found', 404);
+
+    return prisma.$transaction(async (tx) => {
+      // Restore slot availability
+      const slotIds = booking.items.map((item) => item.slotId);
+
+      await tx.timeSlot.updateMany({
+        where: { id: { in: slotIds } },
+        data: { isAvailable: true },
+      });
+
+      // Delete payment if exists
+      if (booking.payment) {
+        await tx.payment.delete({
+          where: { id: booking.payment.id },
+        });
+      }
+
+      // Delete booking items first (if not cascade)
+      await tx.bookingItem.deleteMany({
+        where: { bookingId: booking.id },
+      });
+
+      // Finally delete booking
+      await tx.booking.delete({
+        where: { id },
+      });
+
+      return {
+        message: 'Booking deleted successfully',
+        bookingId: id,
+      };
+    });
+  }
 }

@@ -16,6 +16,7 @@ import {
   updateDiscountCode,
   getDashboardData,
   deleteDiscountCode,
+  getSlots,
 } from './admin.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
 
@@ -38,6 +39,7 @@ router.put('/lanes/:id', requireRole('ADMIN', 'STAFF'), updateLane);
 router.delete('/lanes/:id', requireRole('ADMIN'), deleteLane);
 
 // ── Slots ─────────────────────────────────────────────────────────────────
+router.get('/slots', getSlots);
 router.post('/slots/block', requireRole('ADMIN', 'STAFF'), blockSlots);
 router.post('/slots/unblock', requireRole('ADMIN', 'STAFF'), unblockSlots);
 

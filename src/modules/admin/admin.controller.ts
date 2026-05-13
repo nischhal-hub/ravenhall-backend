@@ -80,6 +80,26 @@ export const deleteLane = async (
     next(error);
   }
 };
+export const getSlots = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { date, laneId, isBlocked } = req.query;
+
+    const slots = await adminService.getSlots({
+      date: date as string,
+      laneId: laneId as string,
+      isBlocked:
+        isBlocked === 'true' ? true : isBlocked === 'false' ? false : undefined,
+    });
+
+    sendSuccess(res, slots, 'Slots fetched successfully');
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const blockSlots = async (
   req: Request,

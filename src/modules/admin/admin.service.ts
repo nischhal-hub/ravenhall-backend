@@ -110,6 +110,24 @@ export class AdminService {
     });
   }
 
+  async getSlots(filter: {
+    date?: string;
+    laneId?: string;
+    isBlocked?: boolean;
+  }) {
+    return await prisma.timeSlot.findMany({
+      where: {
+        ...(filter.date && { date: new Date(filter.date) }),
+        ...(filter.laneId && { laneId: filter.laneId }),
+        ...(filter.isBlocked !== undefined && { isBlocked: filter.isBlocked }),
+      },
+      include: {
+        lane: { select: { name: true, type: true } },
+      },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+    });
+  }
+
   async blockSlots(slotIds: string[]) {
     await prisma.timeSlot.updateMany({
       where: { id: { in: slotIds } },

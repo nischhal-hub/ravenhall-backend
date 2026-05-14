@@ -114,18 +114,66 @@ export class AdminService {
     date?: string;
     laneId?: string;
     isBlocked?: boolean;
+    search?: string;
+    page?: number;
+    limit?: number;
   }) {
-    return await prisma.timeSlot.findMany({
-      where: {
-        ...(filter.date && { date: new Date(filter.date) }),
-        ...(filter.laneId && { laneId: filter.laneId }),
-        ...(filter.isBlocked !== undefined && { isBlocked: filter.isBlocked }),
+    const { date, laneId, isBlocked, search, page = 1, limit = 20 } = filter;
+
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.TimeSlotWhereInput = {
+      ...(date && {
+        date: new Date(date),
+      }),
+
+      ...(laneId && {
+        laneId,
+      }),
+
+      ...(isBlocked !== undefined && {
+        isBlocked,
+      }),
+
+      ...(search && {
+        lane: {
+          name: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+      }),
+    };
+
+    // Run in transaction (data + count)
+    const [slots, total] = await prisma.$transaction([
+      prisma.timeSlot.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          lane: {
+            select: {
+              name: true,
+              type: true,
+            },
+          },
+        },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      }),
+
+      prisma.timeSlot.count({ where }),
+    ]);
+
+    return {
+      data: slots,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      include: {
-        lane: { select: { name: true, type: true } },
-      },
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
-    });
+    };
   }
 
   async blockSlots(slotIds: string[]) {

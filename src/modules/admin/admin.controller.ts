@@ -86,16 +86,26 @@ export const getSlots = async (
   next: NextFunction,
 ) => {
   try {
-    const { date, laneId, isBlocked } = req.query;
+    const {
+      date,
+      laneId,
+      isBlocked,
+      page = '1',
+      limit = '20',
+      search,
+    } = req.query;
 
-    const slots = await adminService.getSlots({
+    const result = await adminService.getSlots({
       date: date as string,
       laneId: laneId as string,
+      search: search as string,
+      page: Number(page),
+      limit: Number(limit),
       isBlocked:
         isBlocked === 'true' ? true : isBlocked === 'false' ? false : undefined,
     });
 
-    sendSuccess(res, slots, 'Slots fetched successfully');
+    sendSuccess(res, result, 'Slots fetched successfully');
   } catch (error) {
     next(error);
   }

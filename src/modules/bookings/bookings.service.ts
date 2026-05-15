@@ -4,6 +4,7 @@ import { generateBookingRef } from '../../utils/bookingRef';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { stripe } from '../../config/stripe';
 import { EmailService } from '../notifications/email.service';
+import { Prisma } from '@prisma/client';
 
 const emailService = new EmailService();
 
@@ -93,11 +94,49 @@ export class BookingsService {
       return booking;
     });
   }
-  async getAllBookings(pagination: PaginationParams) {
+  async getAllBookings(params: {
+    page: number;
+    limit: number;
+    skip: number;
+    search?: string;
+    sortBy?: string;
+    order?: 'asc' | 'desc';
+  }) {
+    const {
+      page,
+      limit,
+      skip,
+      search = '',
+      sortBy = 'createdAt',
+      order = 'desc',
+    } = params;
+
+    const where: Prisma.BookingWhereInput = search
+      ? {
+          OR: [
+            {
+              user: {
+                firstName: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            },
+            {
+              id: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        }
+      : {};
+
     const [bookings, total] = await Promise.all([
       prisma.booking.findMany({
+        where,
         include: {
-          user: true, // include user info (important for admin view)
+          user: true,
           items: {
             include: {
               slot: {
@@ -108,16 +147,19 @@ export class BookingsService {
           payment: true,
           discountCode: true,
         },
-        orderBy: { createdAt: 'desc' },
-        skip: pagination.skip,
-        take: pagination.limit,
+        orderBy: {
+          [sortBy]: order,
+        },
+        skip,
+        take: limit,
       }),
-      prisma.booking.count(),
+
+      prisma.booking.count({ where }),
     ]);
 
     return {
       bookings,
-      meta: buildPaginationMeta(total, pagination.page, pagination.limit),
+      meta: buildPaginationMeta(total, page, limit),
     };
   }
   async getMyBookings(userId: string, pagination: PaginationParams) {

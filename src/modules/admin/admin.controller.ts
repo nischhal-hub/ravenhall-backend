@@ -245,7 +245,7 @@ export const getDashboardData = async (
   next: NextFunction,
 ) => {
   try {
-    const data = await adminService.getDashboardData(req, res);
+    const data = await adminService.getDashboardData();
     sendSuccess(res, data);
   } catch (error) {
     next(error);

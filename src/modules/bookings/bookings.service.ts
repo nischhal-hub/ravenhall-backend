@@ -162,24 +162,72 @@ export class BookingsService {
       meta: buildPaginationMeta(total, page, limit),
     };
   }
-  async getMyBookings(userId: string, pagination: PaginationParams) {
+  async getMyBookings(
+    userId: string,
+    params: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      sortBy?: string;
+      order?: 'asc' | 'desc';
+    },
+  ) {
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      sortBy = 'createdAt',
+      order = 'desc',
+    } = params;
+    const skip = (page - 1) * limit;
+
+    const where: any = { userId };
+
+    if (search) {
+      where.OR = [
+        { bookingRef: { contains: search, mode: 'insensitive' } },
+        {
+          items: {
+            some: {
+              slot: {
+                lane: { name: { contains: search, mode: 'insensitive' } },
+              },
+            },
+          },
+        },
+      ];
+    }
+
     const [bookings, total] = await Promise.all([
       prisma.booking.findMany({
-        where: { userId },
+        where,
         include: {
-          items: { include: { slot: { include: { lane: true } } } },
+          user: {
+            // ← Add this
+            select: { firstName: true, lastName: true, email: true },
+          },
+          items: {
+            include: {
+              slot: {
+                include: {
+                  lane: { select: { name: true, type: true } },
+                },
+              },
+            },
+          },
           payment: true,
         },
-        orderBy: { createdAt: 'desc' },
-        skip: pagination.skip,
-        take: pagination.limit,
+        orderBy: { [sortBy]: order },
+        skip,
+        take: limit,
       }),
-      prisma.booking.count({ where: { userId } }),
+
+      prisma.booking.count({ where }),
     ]);
 
     return {
       bookings,
-      meta: buildPaginationMeta(total, pagination.page, pagination.limit),
+      meta: buildPaginationMeta(total, page, limit),
     };
   }
 

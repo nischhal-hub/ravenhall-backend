@@ -47,10 +47,17 @@ export const getMyBookings = async (
 ) => {
   try {
     const pagination = getPaginationParams(req.query);
-    const result = await bookingsService.getMyBookings(
-      req.user!.id,
-      pagination,
-    );
+
+    // Extract query parameters (same as getAllBookings)
+    const { search = '', sortBy = 'createdAt', order = 'desc' } = req.query;
+
+    const result = await bookingsService.getMyBookings(req.user!.id, {
+      ...pagination,
+      search: search as string,
+      sortBy: sortBy as string,
+      order: order as 'asc' | 'desc',
+    });
+
     sendSuccess(res, result);
   } catch (error) {
     next(error);

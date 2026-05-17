@@ -205,10 +205,71 @@ export class AdminService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const total = bookings.reduce((sum, b) => sum + b.finalAmount, 0);
-    const count = bookings.length;
+    // ---------------------------
+    // Helper: get group key
+    // ---------------------------
+    const getKey = (date: Date) => {
+      const d = new Date(date);
 
-    return { total, count, bookings, groupBy };
+      const year = d.getFullYear();
+      const month = d.getMonth(); // 0-based
+      const day = d.getDate();
+
+      if (groupBy === 'year') {
+        return `${year}`;
+      }
+
+      if (groupBy === 'month') {
+        return `${year}-${String(month + 1).padStart(2, '0')}`;
+      }
+
+      if (groupBy === 'week') {
+        // ISO week calculation (simple version)
+        const firstJan = new Date(d.getFullYear(), 0, 1);
+        const days = Math.floor(
+          (d.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        const week = Math.ceil((days + firstJan.getDay() + 1) / 7);
+        return `${year}-W${week}`;
+      }
+
+      // default: day
+      return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    };
+
+    // ---------------------------
+    // Grouping
+    // ---------------------------
+    const grouped: Record<string, { total: number; count: number }> = {};
+
+    for (const b of bookings) {
+      const key = getKey(b.createdAt);
+
+      if (!grouped[key]) {
+        grouped[key] = { total: 0, count: 0 };
+      }
+
+      grouped[key].total += b.finalAmount;
+      grouped[key].count += 1;
+    }
+
+    // ---------------------------
+    // Format response
+    // ---------------------------
+    const result = Object.entries(grouped).map(([key, value]) => ({
+      period: key,
+      total: value.total,
+      count: value.count,
+    }));
+
+    const grandTotal = bookings.reduce((sum, b) => sum + b.finalAmount, 0);
+
+    return {
+      groupBy,
+      total: grandTotal,
+      count: bookings.length,
+      data: result,
+    };
   }
 
   async getAllUsers(pagination: PaginationParams, search?: string) {

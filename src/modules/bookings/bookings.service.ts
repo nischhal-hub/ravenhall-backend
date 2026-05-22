@@ -1,10 +1,10 @@
-import { prisma } from '../../config/database';
-import { AppError } from '../../utils/AppError';
-import { generateBookingRef } from '../../utils/bookingRef';
-import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
-import { stripe } from '../../config/stripe';
-import { EmailService } from '../notifications/email.service';
-import { Prisma } from '@prisma/client';
+import { prisma } from "../../config/database";
+import { AppError } from "../../utils/AppError";
+import { generateBookingRef } from "../../utils/bookingRef";
+import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
+import { stripe } from "../../config/stripe";
+import { EmailService } from "../notifications/email.service";
+import { Prisma } from "@prisma/client";
 
 const emailService = new EmailService();
 
@@ -13,85 +13,99 @@ export class BookingsService {
     userId: string,
     data: { slotId: string; discountCode?: string },
   ) {
-    return prisma.$transaction(async (tx) => {
-      // Lock the slot row to prevent race conditions
-      const slot = await tx.timeSlot.findUnique({
-        where: { id: data.slotId },
-        include: { lane: true },
-      });
+    // All reads outside the transaction
+    const slot = await prisma.timeSlot.findUnique({
+      where: { id: data.slotId },
+      include: { lane: true },
+    });
 
-      if (!slot) throw new AppError('Time slot not found', 404);
-      if (!slot.isAvailable || slot.isBlocked) {
-        throw new AppError('This slot is no longer available', 409);
+    if (!slot) throw new AppError("Time slot not found", 404);
+    if (!slot.isAvailable || slot.isBlocked) {
+      throw new AppError("This slot is no longer available", 409);
+    }
+
+    const membership = await prisma.membership.findFirst({
+      where: { userId, isActive: true, endDate: { gt: new Date() } },
+    });
+
+    let discountPct = 0;
+    let discountCodeRecord = null;
+
+    if (data.discountCode) {
+      discountCodeRecord = await prisma.discountCode.findUnique({
+        where: { code: data.discountCode },
+      });
+      if (
+        discountCodeRecord &&
+        discountCodeRecord.isActive &&
+        discountCodeRecord.validFrom <= new Date() &&
+        discountCodeRecord.validTo >= new Date() &&
+        (!discountCodeRecord.maxUses ||
+          discountCodeRecord.usedCount < discountCodeRecord.maxUses)
+      ) {
+        discountPct = Math.max(discountPct, discountCodeRecord.discountPct);
       }
+    }
 
-      // Check membership discount
-      const membership = await tx.membership.findFirst({
-        where: { userId, isActive: true, endDate: { gt: new Date() } },
-      });
+    if (membership) {
+      discountPct = Math.max(discountPct, membership.discountPct);
+    }
 
-      let discountPct = 0;
-      let discountCodeRecord = null;
+    const unitPrice = slot.lane.hourlyRate;
+    const discountAmount = (unitPrice * discountPct) / 100;
+    const finalAmount = unitPrice - discountAmount;
 
-      // Check discount code
-      if (data.discountCode) {
-        discountCodeRecord = await tx.discountCode.findUnique({
-          where: { code: data.discountCode },
+    // Transaction: only fast atomic writes, no includes
+    const bookingId = await prisma.$transaction(
+      async (tx) => {
+        const freshSlot = await tx.timeSlot.findUnique({
+          where: { id: data.slotId },
+          select: { isAvailable: true, isBlocked: true },
         });
-        if (
-          discountCodeRecord &&
-          discountCodeRecord.isActive &&
-          discountCodeRecord.validFrom <= new Date() &&
-          discountCodeRecord.validTo >= new Date() &&
-          (!discountCodeRecord.maxUses ||
-            discountCodeRecord.usedCount < discountCodeRecord.maxUses)
-        ) {
-          discountPct = Math.max(discountPct, discountCodeRecord.discountPct);
+
+        if (!freshSlot || !freshSlot.isAvailable || freshSlot.isBlocked) {
+          throw new AppError("This slot is no longer available", 409);
         }
-      }
 
-      if (membership) {
-        discountPct = Math.max(discountPct, membership.discountPct);
-      }
-
-      const unitPrice = slot.lane.hourlyRate;
-      const discountAmount = (unitPrice * discountPct) / 100;
-      const finalAmount = unitPrice - discountAmount;
-
-      const booking = await tx.booking.create({
-        data: {
-          bookingRef: generateBookingRef(),
-          userId,
-          totalAmount: unitPrice,
-          discountAmount,
-          finalAmount,
-          discountCodeId: discountCodeRecord?.id,
-          items: {
-            create: {
-              slotId: slot.id,
-              unitPrice,
-              subtotal: finalAmount,
+        const booking = await tx.booking.create({
+          data: {
+            bookingRef: generateBookingRef(),
+            userId,
+            totalAmount: unitPrice,
+            discountAmount,
+            finalAmount,
+            discountCodeId: discountCodeRecord?.id,
+            items: {
+              create: {
+                slotId: slot.id,
+                unitPrice,
+                subtotal: finalAmount,
+              },
             },
           },
-        },
-        include: { items: { include: { slot: { include: { lane: true } } } } },
-      });
-
-      // Mark slot as unavailable
-      await tx.timeSlot.update({
-        where: { id: slot.id },
-        data: { isAvailable: false },
-      });
-
-      // Increment discount code usage
-      if (discountCodeRecord) {
-        await tx.discountCode.update({
-          where: { id: discountCodeRecord.id },
-          data: { usedCount: { increment: 1 } },
         });
-      }
 
-      return booking;
+        await tx.timeSlot.update({
+          where: { id: slot.id },
+          data: { isAvailable: false },
+        });
+
+        if (discountCodeRecord) {
+          await tx.discountCode.update({
+            where: { id: discountCodeRecord.id },
+            data: { usedCount: { increment: 1 } },
+          });
+        }
+
+        return booking.id;
+      },
+      { timeout: 15000 },
+    );
+
+    // Fetch full booking with relations after transaction closes
+    return prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { items: { include: { slot: { include: { lane: true } } } } },
     });
   }
   async getAllBookings(params: {
@@ -100,15 +114,15 @@ export class BookingsService {
     skip: number;
     search?: string;
     sortBy?: string;
-    order?: 'asc' | 'desc';
+    order?: "asc" | "desc";
   }) {
     const {
       page,
       limit,
       skip,
-      search = '',
-      sortBy = 'createdAt',
-      order = 'desc',
+      search = "",
+      sortBy = "createdAt",
+      order = "desc",
     } = params;
 
     const where: Prisma.BookingWhereInput = search
@@ -118,14 +132,14 @@ export class BookingsService {
               user: {
                 firstName: {
                   contains: search,
-                  mode: 'insensitive',
+                  mode: "insensitive",
                 },
               },
             },
             {
               id: {
                 contains: search,
-                mode: 'insensitive',
+                mode: "insensitive",
               },
             },
           ],
@@ -169,15 +183,15 @@ export class BookingsService {
       limit?: number;
       search?: string;
       sortBy?: string;
-      order?: 'asc' | 'desc';
+      order?: "asc" | "desc";
     },
   ) {
     const {
       page = 1,
       limit = 10,
-      search = '',
-      sortBy = 'createdAt',
-      order = 'desc',
+      search = "",
+      sortBy = "createdAt",
+      order = "desc",
     } = params;
     const skip = (page - 1) * limit;
 
@@ -185,12 +199,12 @@ export class BookingsService {
 
     if (search) {
       where.OR = [
-        { bookingRef: { contains: search, mode: 'insensitive' } },
+        { bookingRef: { contains: search, mode: "insensitive" } },
         {
           items: {
             some: {
               slot: {
-                lane: { name: { contains: search, mode: 'insensitive' } },
+                lane: { name: { contains: search, mode: "insensitive" } },
               },
             },
           },
@@ -241,7 +255,7 @@ export class BookingsService {
         discountCode: true,
       },
     });
-    if (!booking) throw new AppError('Booking not found', 404);
+    if (!booking) throw new AppError("Booking not found", 404);
     return booking;
   }
 
@@ -251,11 +265,11 @@ export class BookingsService {
       include: { items: true, payment: true },
     });
 
-    if (!booking) throw new AppError('Booking not found', 404);
-    if (booking.status === 'CANCELLED')
-      throw new AppError('Booking already cancelled', 400);
-    if (booking.status === 'COMPLETED')
-      throw new AppError('Cannot cancel a completed booking', 400);
+    if (!booking) throw new AppError("Booking not found", 404);
+    if (booking.status === "CANCELLED")
+      throw new AppError("Booking already cancelled", 400);
+    if (booking.status === "COMPLETED")
+      throw new AppError("Cannot cancel a completed booking", 400);
 
     return prisma.$transaction(async (tx) => {
       // Restore slot availability
@@ -268,20 +282,20 @@ export class BookingsService {
       // Process refund if payment exists
       if (
         booking.payment?.stripePaymentIntentId &&
-        booking.payment.status === 'SUCCEEDED'
+        booking.payment.status === "SUCCEEDED"
       ) {
         await stripe.refunds.create({
           payment_intent: booking.payment.stripePaymentIntentId,
         });
         await tx.payment.update({
           where: { id: booking.payment.id },
-          data: { status: 'REFUNDED' },
+          data: { status: "REFUNDED" },
         });
       }
 
       const updated = await tx.booking.update({
         where: { id },
-        data: { status: 'CANCELLED' },
+        data: { status: "CANCELLED" },
         include: { items: { include: { slot: { include: { lane: true } } } } },
       });
 
@@ -301,7 +315,7 @@ export class BookingsService {
       },
     });
 
-    if (!booking) throw new AppError('Booking not found', 404);
+    if (!booking) throw new AppError("Booking not found", 404);
 
     return prisma.$transaction(async (tx) => {
       // Restore slot availability
@@ -330,7 +344,7 @@ export class BookingsService {
       });
 
       return {
-        message: 'Booking deleted successfully',
+        message: "Booking deleted successfully",
         bookingId: id,
       };
     });

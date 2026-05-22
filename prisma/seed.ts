@@ -1,9 +1,11 @@
-/**
- * prisma/seed.ts
- * Production-grade seeder for Ravenhall Cricket Centre.
- * Fully idempotent • Realistic data • Chart-ready
- */
-
+// ─────────────────────────────────────────────────────────────────────────────
+//  FAST SEED  — Ravenhall Cricket Centre
+//
+//  Slots   : upcoming 61 days only (today → +60), 10:00–18:00, bulk createMany
+//  History : past 365 days of bookings/payments WITHOUT slot rows (dashboards
+//            only need booking.createdAt + payment.amount for charts)
+//  Speed   : ~200-row batches + createMany → typically < 30 s total
+// ─────────────────────────────────────────────────────────────────────────────
 import {
   PrismaClient,
   LaneType,
@@ -20,13 +22,11 @@ const prisma = new PrismaClient({
 
 const SALT_ROUNDS = 12;
 
-function log(entity: string, key: string) {
-  console.log(`  ✓  [${entity}] ${key}`);
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-function randomBetween(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
+const log = (e: string, k: string) => console.log(`  ✓  [${e}] ${k}`);
+const rb = (min: number, max: number) =>
+  Math.floor(Math.random() * (max - min + 1)) + min;
 
 function daysAgo(n: number): Date {
   const d = new Date();
@@ -34,14 +34,25 @@ function daysAgo(n: number): Date {
   d.setHours(0, 0, 0, 0);
   return d;
 }
-
+function daysFromNow(n: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 function addDays(date: Date, n: number): Date {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
   return d;
 }
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function ref(i: number) {
+  return `RIC-2025-${String(i).padStart(5, '0')}`;
+}
 
-// ── Static seed data ───────────────────────────────────────────────────────
+// ── Static data ────────────────────────────────────────────────────────────
 
 const RAW_USERS = [
   {
@@ -65,7 +76,6 @@ const RAW_USERS = [
     lastName: 'Sharma',
     role: Role.STAFF,
   },
-  // Customers
   {
     email: 'liam.johnson@gmail.com',
     password: 'Pass@123',
@@ -99,83 +109,6 @@ const RAW_USERS = [
     password: 'Pass@123',
     firstName: 'William',
     lastName: 'Davis',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'ava.miller@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Ava',
-    lastName: 'Miller',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'james.wilson@gmail.com',
-    password: 'Pass@123',
-    firstName: 'James',
-    lastName: 'Wilson',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'sophia.moore@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Sophia',
-    lastName: 'Moore',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'benjamin.taylor@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Benjamin',
-    lastName: 'Taylor',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'isabella.anderson@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Isabella',
-    lastName: 'Anderson',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'lucas.thomas@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Lucas',
-    lastName: 'Thomas',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'mia.jackson@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Mia',
-    lastName: 'Jackson',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'henry.white@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Henry',
-    lastName: 'White',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'charlotte.harris@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Charlotte',
-    lastName: 'Harris',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'alexander.martin@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Alexander',
-    lastName: 'Martin',
-    role: Role.CUSTOMER,
-  },
-  {
-    email: 'amelia.garcia@gmail.com',
-    password: 'Pass@123',
-    firstName: 'Amelia',
-    lastName: 'Garcia',
     role: Role.CUSTOMER,
   },
 ] as const;
@@ -249,341 +182,319 @@ const DISCOUNT_SEEDS = [
     maxUses: 50,
     validForDays: 60,
   },
-  {
-    code: 'MEMBER5',
-    description: '5% loyalty reward',
-    discountPct: 5,
-    maxUses: 200,
-    validForDays: 180,
-  },
 ];
 
-const MEMBERSHIP_MAP: Record<
-  string,
-  { plan: MembershipPlan; discountPct: number }
-> = {
-  'liam.johnson@gmail.com': { plan: MembershipPlan.ANNUAL, discountPct: 15 },
-  'emma.williams@gmail.com': { plan: MembershipPlan.ANNUAL, discountPct: 15 },
-  'noah.brown@gmail.com': { plan: MembershipPlan.MONTHLY, discountPct: 10 },
-  'olivia.jones@gmail.com': { plan: MembershipPlan.MONTHLY, discountPct: 10 },
-  'william.davis@gmail.com': { plan: MembershipPlan.MONTHLY, discountPct: 10 },
-  'ava.miller@gmail.com': { plan: MembershipPlan.CASUAL, discountPct: 5 },
-  'james.wilson@gmail.com': { plan: MembershipPlan.CASUAL, discountPct: 5 },
-  'sophia.moore@gmail.com': { plan: MembershipPlan.ANNUAL, discountPct: 15 },
-  'benjamin.taylor@gmail.com': {
-    plan: MembershipPlan.MONTHLY,
-    discountPct: 10,
-  },
-  'isabella.anderson@gmail.com': {
-    plan: MembershipPlan.CASUAL,
-    discountPct: 5,
-  },
-};
+// 10:00 → 18:00  (8 one-hour slots per lane per day)
+const SLOT_HOURS = [10, 11, 12, 13, 14, 15, 16, 17];
 
-// ── Seed functions ─────────────────────────────────────────────────────────
+// ── Clear ──────────────────────────────────────────────────────────────────
 
-async function clearDynamicData() {
-  console.log('\n── Clearing old dynamic data ──');
+async function clearAll() {
+  console.log('\n── Clearing ALL data ──');
+  await prisma.notification.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.bookingItem.deleteMany();
   await prisma.booking.deleteMany();
   await prisma.timeSlot.deleteMany();
   await prisma.membership.deleteMany();
-  console.log(
-    '  ✓  Cleared: payments, bookingItems, bookings, timeSlots, memberships',
-  );
+  await prisma.refreshToken.deleteMany();
+  await prisma.discountCode.deleteMany();
+  await prisma.lane.deleteMany();
+  await prisma.user.deleteMany();
+  console.log('  ✓  All tables cleared');
 }
+
+// ── Users ──────────────────────────────────────────────────────────────────
 
 async function seedUsers() {
   console.log('\n── Users ──');
-  const hashed = await Promise.all(
-    RAW_USERS.map(async (u) => ({
-      ...u,
-      password: await bcrypt.hash(u.password, SALT_ROUNDS),
-    })),
-  );
-  for (const user of hashed) {
-    await prisma.user.upsert({
-      where: { email: user.email },
-      update: {},
-      create: {
-        email: user.email,
-        password: user.password,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
+  const ids: Record<string, string> = {};
+  for (const u of RAW_USERS) {
+    const created = await prisma.user.create({
+      data: {
+        email: u.email,
+        password: await bcrypt.hash(u.password, SALT_ROUNDS),
+        firstName: u.firstName,
+        lastName: u.lastName,
+        role: u.role,
         isEmailVerified: true,
       },
     });
-    log('User', user.email);
+    ids[u.email] = created.id;
+    log('User', u.email);
   }
+  return ids;
 }
+
+// ── Lanes ──────────────────────────────────────────────────────────────────
 
 async function seedLanes() {
   console.log('\n── Lanes ──');
-  for (const lane of LANE_SEEDS) {
-    await prisma.lane.upsert({
-      where: { name: lane.name },
-      update: {
-        hourlyRate: lane.hourlyRate,
-        capacity: lane.capacity,
-        description: lane.description,
-        isActive: true,
-      },
-      create: { ...lane, isActive: true },
+  const lanes: { id: string; hourlyRate: number }[] = [];
+  for (const l of LANE_SEEDS) {
+    const created = await prisma.lane.create({
+      data: { ...l, isActive: true },
     });
-    log('Lane', lane.name);
+    lanes.push({ id: created.id, hourlyRate: l.hourlyRate });
+    log('Lane', l.name);
   }
+  return lanes;
 }
+
+// ── Discount codes ─────────────────────────────────────────────────────────
 
 async function seedDiscountCodes() {
   console.log('\n── Discount Codes ──');
   const now = new Date();
-  for (const seed of DISCOUNT_SEEDS) {
-    const validFrom = new Date(now);
-    const validTo = addDays(now, seed.validForDays);
-    await prisma.discountCode.upsert({
-      where: { code: seed.code },
-      update: {
-        description: seed.description,
-        discountPct: seed.discountPct,
-        maxUses: seed.maxUses,
-        validFrom,
-        validTo,
-      },
-      create: {
-        code: seed.code,
-        description: seed.description,
-        discountPct: seed.discountPct,
-        maxUses: seed.maxUses,
-        validFrom,
-        validTo,
+  const codes: Record<string, { id: string; pct: number }> = {};
+  for (const s of DISCOUNT_SEEDS) {
+    const dc = await prisma.discountCode.create({
+      data: {
+        code: s.code,
+        description: s.description,
+        discountPct: s.discountPct,
+        maxUses: s.maxUses,
+        validFrom: now,
+        validTo: addDays(now, s.validForDays),
         isActive: true,
       },
     });
-    log('DiscountCode', seed.code);
+    codes[s.code] = { id: dc.id, pct: s.discountPct };
+    log('DiscountCode', s.code);
   }
+  return codes;
 }
 
-async function seedMemberships() {
+// ── Memberships ────────────────────────────────────────────────────────────
+
+async function seedMemberships(userIds: Record<string, string>) {
   console.log('\n── Memberships ──');
   const now = new Date();
-
-  for (const [email, config] of Object.entries(MEMBERSHIP_MAP)) {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-    if (!user) continue;
-
-    // Stagger start dates over the past 6 months for realism
-    const randomOffset = randomBetween(0, 180);
-    const startDate = daysAgo(randomOffset);
+  const rows = [
+    { email: 'liam.johnson@gmail.com', plan: MembershipPlan.ANNUAL, pct: 15 },
+    { email: 'emma.williams@gmail.com', plan: MembershipPlan.ANNUAL, pct: 15 },
+    { email: 'noah.brown@gmail.com', plan: MembershipPlan.MONTHLY, pct: 10 },
+    { email: 'olivia.jones@gmail.com', plan: MembershipPlan.MONTHLY, pct: 10 },
+  ];
+  for (const { email, plan, pct } of rows) {
+    const userId = userIds[email];
+    if (!userId) continue;
+    const startDate = daysAgo(rb(30, 180));
     const endDate = addDays(
       startDate,
-      config.plan === MembershipPlan.ANNUAL
-        ? 365
-        : config.plan === MembershipPlan.MONTHLY
-          ? 30
-          : 7,
+      plan === MembershipPlan.ANNUAL ? 365 : 30,
     );
-
     await prisma.membership.create({
       data: {
-        userId: user.id,
-        plan: config.plan,
-        discountPct: config.discountPct,
+        userId,
+        plan,
+        discountPct: pct,
         startDate,
         endDate,
         isActive: endDate >= now,
       },
     });
-    log('Membership', `${email} → ${config.plan}`);
+    log('Membership', `${email} → ${plan}`);
   }
 }
 
-// ── Core: time slots + realistic bookings over 6 months ───────────────────
+// ── UPCOMING slots (bulk, one createMany per day) ──────────────────────────
 
-async function seedSlotsAndBookings() {
-  console.log('\n── Time Slots & Bookings (6 months of realistic data) ──');
-
-  const lanes = await prisma.lane.findMany({
-    select: { id: true, name: true, hourlyRate: true, type: true },
-  });
-  const customers = await prisma.user.findMany({
-    where: { role: Role.CUSTOMER },
-    select: { id: true, email: true },
-  });
-
-  if (!lanes.length || !customers.length) {
-    console.log('  ⚠  No lanes or customers — skipping.');
-    return;
+async function seedUpcomingSlots(lanes: { id: string; hourlyRate: number }[]) {
+  console.log('\n── Upcoming Slots: today → +60 days, 10:00–18:00 ──');
+  let total = 0;
+  for (let d = 0; d <= 60; d++) {
+    const date = daysFromNow(d);
+    const rows = lanes.flatMap((lane) =>
+      SLOT_HOURS.map((h) => ({
+        laneId: lane.id,
+        date,
+        startTime: `${String(h).padStart(2, '0')}:00`,
+        endTime: `${String(h + 1).padStart(2, '0')}:00`,
+        isAvailable: true,
+        isBlocked: false,
+      })),
+    );
+    await prisma.timeSlot.createMany({ data: rows, skipDuplicates: true });
+    total += rows.length;
   }
+  // 61 days × 6 lanes × 8 hours = 2 928 rows — fast
+  console.log(`  ✓  ${total} upcoming slots`);
+}
 
-  // We'll generate slots for 180 days in the past + 14 days future
-  const PAST_DAYS = 180;
-  const FUTURE_DAYS = 14;
-  const TOTAL_DAYS = PAST_DAYS + FUTURE_DAYS;
+// ── HISTORICAL bookings (no slot rows — just booking + payment) ────────────
+//
+//  Dashboard revenue/booking charts only JOIN on booking.createdAt and
+//  payment.amount — they don't need a real TimeSlot row. This lets us seed
+//  a full year of history in a few seconds instead of minutes.
 
-  // Business hours: 9am–9pm (hourly slots)
-  const OPEN_HOUR = 9;
-  const CLOSE_HOUR = 21; // last slot starts at 20:00
+async function seedHistoricalBookings(
+  lanes: { id: string; hourlyRate: number }[],
+  customerIds: string[],
+  codes: Record<string, { id: string; pct: number }>,
+) {
+  console.log('\n── Historical Bookings: past 365 days (bulk batches) ──');
 
-  // Booking density per day-of-week (0=Sun … 6=Sat), realistic cricket centre
-  // Weekend peaks, quiet Tuesday/Wednesday
-  const WEEKDAY_DENSITY = [0.6, 0.35, 0.3, 0.4, 0.5, 0.75, 0.8]; // Sun→Sat
+  const BATCH_SIZE = 200;
+  const discountKeys = ['WELCOME10', 'SUMMER15']; // exclude STAFF20
 
+  type BRow = {
+    bookingRef: string;
+    userId: string;
+    status: BookingStatus;
+    totalAmount: number;
+    discountAmount: number;
+    finalAmount: number;
+    discountCodeId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  let batchBuf: BRow[] = [];
+  let bookingIdx = 1;
   let totalBookings = 0;
-  let refCounter = 1;
+  const dcUsage = new Map<string, number>();
 
-  for (let dayOffset = -PAST_DAYS; dayOffset <= FUTURE_DAYS; dayOffset++) {
-    const date = addDays(new Date(), dayOffset);
-    date.setHours(0, 0, 0, 0);
+  const flush = async (rows: BRow[]) => {
+    if (!rows.length) return;
+    await prisma.booking.createMany({ data: rows });
 
-    const dow = date.getDay(); // 0=Sun
-    const density = WEEKDAY_DENSITY[dow];
+    // Fetch back IDs by ref
+    const created = await prisma.booking.findMany({
+      where: { bookingRef: { in: rows.map((r) => r.bookingRef) } },
+      select: {
+        id: true,
+        bookingRef: true,
+        finalAmount: true,
+        status: true,
+        discountCodeId: true,
+        createdAt: true,
+      },
+    });
 
-    for (const lane of lanes) {
-      for (let hour = OPEN_HOUR; hour < CLOSE_HOUR; hour++) {
-        const startTime = `${hour.toString().padStart(2, '0')}:00`;
-        const endTime = `${(hour + 1).toString().padStart(2, '0')}:00`;
+    // Payments in one createMany
+    await prisma.payment.createMany({
+      data: created.map((b) => {
+        const refunded = b.status === BookingStatus.CANCELLED;
+        const pending = b.status === BookingStatus.PENDING;
+        return {
+          bookingId: b.id,
+          stripePaymentIntentId: `pi_hist_${b.id.replace(/-/g, '').slice(0, 20)}`,
+          amount: b.finalAmount,
+          currency: 'aud',
+          status: refunded
+            ? PaymentStatus.REFUNDED
+            : pending
+              ? PaymentStatus.PENDING
+              : PaymentStatus.SUCCEEDED,
+          refundAmount: refunded ? b.finalAmount : null,
+          paidAt: pending ? null : b.createdAt,
+          createdAt: b.createdAt,
+          updatedAt: b.createdAt,
+        };
+      }),
+    });
 
-        // Slight lane-type demand variation
-        const laneMultiplier =
-          lane.type === 'BATTING' ? 1.15 : lane.type === 'BOWLING' ? 1.0 : 0.85;
-        // Peak hours: 10–12, 17–20
-        const hourMultiplier =
-          (hour >= 10 && hour <= 12) || (hour >= 17 && hour <= 20) ? 1.3 : 0.8;
+    // Tally discount usage
+    for (const b of created) {
+      if (b.discountCodeId)
+        dcUsage.set(b.discountCodeId, (dcUsage.get(b.discountCodeId) ?? 0) + 1);
+    }
 
-        const shouldBook =
-          Math.random() < density * laneMultiplier * hourMultiplier;
+    totalBookings += rows.length;
+    process.stdout.write(`\r  ↻  ${totalBookings} bookings...`);
+  };
 
-        // Create the slot
-        const slot = await prisma.timeSlot.create({
-          data: {
-            laneId: lane.id,
-            date,
-            startTime,
-            endTime,
-            isAvailable: !shouldBook || dayOffset > 0, // future slots stay available
-            isBlocked: false,
-          },
-        });
+  for (let dayOffset = -365; dayOffset < 0; dayOffset++) {
+    const date = daysAgo(-dayOffset);
+    const monthsAgo = Math.abs(dayOffset) / 30;
 
-        // Only create bookings for past/present slots with demand
-        if (shouldBook && dayOffset <= 0) {
-          const customer = customers[randomBetween(0, customers.length - 1)];
-          const year = date.getFullYear();
-          const bookingRef = `RIC-${year}-${String(refCounter).padStart(5, '0')}`;
-          refCounter++;
+    // Growth curve: fewer bookings further in the past
+    const avg = monthsAgo < 1 ? 8 : monthsAgo < 3 ? 6 : monthsAgo < 6 ? 4 : 2;
+    const count = rb(Math.max(1, avg - 2), avg + 2);
 
-          // Simulate some cancellations (~8%) and completions for older bookings
-          let status: BookingStatus;
-          if (dayOffset < -7) {
-            const roll = Math.random();
-            status =
-              roll < 0.08
-                ? BookingStatus.CANCELLED
-                : roll < 0.85
-                  ? BookingStatus.COMPLETED
-                  : BookingStatus.CONFIRMED;
-          } else if (dayOffset < 0) {
-            status =
-              Math.random() < 0.06
-                ? BookingStatus.CANCELLED
-                : BookingStatus.CONFIRMED;
-          } else {
-            status = BookingStatus.CONFIRMED;
-          }
+    for (let i = 0; i < count; i++) {
+      const lane = pick(lanes);
+      const userId = pick(customerIds);
+      const useDiscount = Math.random() < 0.2;
+      const dk = useDiscount ? pick(discountKeys) : null;
+      const dc = dk ? codes[dk] : null;
+      const discPct = dc?.pct ?? 0;
+      const total = lane.hourlyRate;
+      const disc = parseFloat(((discPct / 100) * total).toFixed(2));
+      const final = parseFloat((total - disc).toFixed(2));
 
-          // Apply a random discount to ~20% of bookings
-          const applyDiscount = Math.random() < 0.2;
-          const discountPct = applyDiscount
-            ? [5, 10, 15, 20][randomBetween(0, 3)]
-            : 0;
-          const totalAmount = lane.hourlyRate;
-          const discountAmount = parseFloat(
-            ((totalAmount * discountPct) / 100).toFixed(2),
-          );
-          const finalAmount = parseFloat(
-            (totalAmount - discountAmount).toFixed(2),
-          );
+      const r = Math.random();
+      const status =
+        r < 0.05
+          ? BookingStatus.CANCELLED
+          : r < 0.08
+            ? BookingStatus.PENDING
+            : BookingStatus.COMPLETED;
 
-          const booking = await prisma.booking.create({
-            data: {
-              bookingRef,
-              userId: customer.id,
-              status,
-              totalAmount,
-              discountAmount,
-              finalAmount,
-              createdAt: new Date(
-                date.getTime() +
-                  hour * 3600 * 1000 -
-                  86400 * 1000 * randomBetween(0, 2),
-              ),
-            },
-          });
+      const createdAt = new Date(date);
+      createdAt.setHours(rb(8, 20), rb(0, 59), 0, 0);
 
-          await prisma.bookingItem.create({
-            data: {
-              bookingId: booking.id,
-              slotId: slot.id,
-              unitPrice: lane.hourlyRate,
-              subtotal: finalAmount,
-            },
-          });
+      batchBuf.push({
+        bookingRef: ref(bookingIdx++),
+        userId,
+        status,
+        totalAmount: total,
+        discountAmount: disc,
+        finalAmount: final,
+        discountCodeId: dc?.id ?? null,
+        createdAt,
+        updatedAt: createdAt,
+      });
 
-          // Create payment for all non-cancelled bookings
-          if (status !== BookingStatus.CANCELLED) {
-            const paymentStatus =
-              status === BookingStatus.COMPLETED
-                ? PaymentStatus.SUCCEEDED
-                : status === BookingStatus.CONFIRMED
-                  ? PaymentStatus.SUCCEEDED
-                  : PaymentStatus.PENDING;
-
-            await prisma.payment.create({
-              data: {
-                bookingId: booking.id,
-                stripePaymentIntentId: `pi_seed_${booking.id}`,
-                amount: finalAmount,
-                currency: 'aud',
-                status: paymentStatus,
-                paidAt:
-                  paymentStatus === PaymentStatus.SUCCEEDED
-                    ? new Date(date.getTime())
-                    : null,
-              },
-            });
-          }
-
-          totalBookings++;
-        }
+      if (batchBuf.length >= BATCH_SIZE) {
+        await flush(batchBuf);
+        batchBuf = [];
       }
     }
   }
 
-  console.log(
-    `  ✓  Created ${totalBookings} bookings across ${TOTAL_DAYS} days`,
-  );
+  await flush(batchBuf);
+
+  // Update discount usedCount
+  for (const [id, count] of dcUsage) {
+    await prisma.discountCode.update({
+      where: { id },
+      data: { usedCount: { increment: count } },
+    });
+  }
+
+  console.log(`\r  ✓  ${totalBookings} historical bookings + payments`);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('\n🏏  Ravenhall Cricket Centre – Full Reseed');
-  console.log(`   Environment : ${process.env.NODE_ENV ?? 'development'}`);
-  console.log(`   Started at  : ${new Date().toISOString()}`);
+  console.log('\n🏏  Ravenhall Cricket Centre — Fast Reseed');
 
-  await clearDynamicData();
-  await seedUsers();
-  await seedLanes();
-  await seedDiscountCodes();
-  await seedMemberships();
-  await seedSlotsAndBookings();
+  await clearAll();
 
-  console.log(`\n✅  Reseed complete  (${new Date().toISOString()})\n`);
+  const userIds = await seedUsers();
+  const lanes = await seedLanes();
+  const codes = await seedDiscountCodes();
+  await seedMemberships(userIds);
+
+  const customerEmails = [
+    'liam.johnson@gmail.com',
+    'emma.williams@gmail.com',
+    'noah.brown@gmail.com',
+    'olivia.jones@gmail.com',
+    'william.davis@gmail.com',
+  ];
+  const customerIds = customerEmails.map((e) => userIds[e]).filter(Boolean);
+
+  await seedUpcomingSlots(lanes);
+  await seedHistoricalBookings(lanes, customerIds, codes);
+
+  console.log('\n✅  Seed complete!');
+  console.log('   admin@ravenhallcricket.com.au  /  Admin@123');
+  console.log('   staff@ravenhallcricket.com.au  /  Staff@123');
+  console.log('   liam.johnson@gmail.com          /  Pass@123');
 }
 
 main()
@@ -591,6 +502,4 @@ main()
     console.error('\n❌  Seed failed:', e);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .finally(() => prisma.$disconnect());

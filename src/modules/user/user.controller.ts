@@ -41,6 +41,12 @@ export const updateMyProfile = async (
   res: Response,
   next: NextFunction,
 ) => {
+  console.log(
+    'Updating profile for user ID:',
+    req.user!.id,
+    'with data:',
+    req.body,
+  );
   try {
     const user = await userService.updateProfile(req.user!.id, req.body);
     sendSuccess(res, user, 'Profile updated successfully');
@@ -56,6 +62,14 @@ export const changePassword = async (
 ) => {
   try {
     const { oldPassword, newPassword } = req.body;
+    console.log(
+      'Changing password for user ID:',
+      req.user!.id,
+      'with oldPassword:',
+      oldPassword,
+      'and newPassword:',
+      newPassword,
+    );
     const result = await userService.changePassword(
       req.user!.id,
       oldPassword,

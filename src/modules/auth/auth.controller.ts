@@ -78,6 +78,7 @@ export const getMe = async (
   next: NextFunction,
 ) => {
   try {
+    console.log('Getting user info for user ID:', req.body);
     const user = await authService.getMe(req.user!.id);
     sendSuccess(res, user);
   } catch (error) {
@@ -135,4 +136,6 @@ export const getProfile = async (
   } catch (error) {
     next(error);
   }
+
+ 
 };

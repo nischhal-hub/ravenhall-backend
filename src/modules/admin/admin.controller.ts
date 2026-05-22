@@ -182,16 +182,7 @@ export const updateUserRole = async (
       req.params.id,
       req.body.role,
     );
-    sendSuccess(res, user);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createDiscountCode = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
+    sendSuccess(res, user);P
 ) => {
   try {
     const code = await adminService.createDiscountCode(req.body);

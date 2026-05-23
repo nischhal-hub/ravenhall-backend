@@ -7,6 +7,7 @@ import {
   cancelBooking,
   getAllBookings,
   deleteBooking,
+  updateBooking,
 } from './bookings.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
 import { validate } from '../../middleware/validate.middleware';
@@ -22,6 +23,7 @@ router.get('/', getAllBookings);
 
 router.get('/my', getMyBookings);
 router.get('/:id', getBookingById);
+router.patch('/:id', authenticate, updateBooking);
 router.patch('/:id/status', updateBookingStatus);
 router.patch('/:id/cancel', cancelBooking);
 router.delete('/:id', deleteBooking);

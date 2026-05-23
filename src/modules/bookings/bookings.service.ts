@@ -1,10 +1,10 @@
-import { prisma } from "../../config/database";
-import { AppError } from "../../utils/AppError";
-import { generateBookingRef } from "../../utils/bookingRef";
-import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
-import { stripe } from "../../config/stripe";
-import { EmailService } from "../notifications/email.service";
-import { Prisma } from "@prisma/client";
+import { prisma } from '../../config/database';
+import { AppError } from '../../utils/AppError';
+import { generateBookingRef } from '../../utils/bookingRef';
+import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
+import { stripe } from '../../config/stripe';
+import { EmailService } from '../notifications/email.service';
+import { Prisma } from '@prisma/client';
 
 const emailService = new EmailService();
 
@@ -19,9 +19,9 @@ export class BookingsService {
       include: { lane: true },
     });
 
-    if (!slot) throw new AppError("Time slot not found", 404);
+    if (!slot) throw new AppError('Time slot not found', 404);
     if (!slot.isAvailable || slot.isBlocked) {
-      throw new AppError("This slot is no longer available", 409);
+      throw new AppError('This slot is no longer available', 409);
     }
 
     const membership = await prisma.membership.findFirst({
@@ -64,7 +64,7 @@ export class BookingsService {
         });
 
         if (!freshSlot || !freshSlot.isAvailable || freshSlot.isBlocked) {
-          throw new AppError("This slot is no longer available", 409);
+          throw new AppError('This slot is no longer available', 409);
         }
 
         const booking = await tx.booking.create({
@@ -114,15 +114,15 @@ export class BookingsService {
     skip: number;
     search?: string;
     sortBy?: string;
-    order?: "asc" | "desc";
+    order?: 'asc' | 'desc';
   }) {
     const {
       page,
       limit,
       skip,
-      search = "",
-      sortBy = "createdAt",
-      order = "desc",
+      search = '',
+      sortBy = 'createdAt',
+      order = 'desc',
     } = params;
 
     const where: Prisma.BookingWhereInput = search
@@ -132,14 +132,14 @@ export class BookingsService {
               user: {
                 firstName: {
                   contains: search,
-                  mode: "insensitive",
+                  mode: 'insensitive',
                 },
               },
             },
             {
               id: {
                 contains: search,
-                mode: "insensitive",
+                mode: 'insensitive',
               },
             },
           ],
@@ -183,15 +183,15 @@ export class BookingsService {
       limit?: number;
       search?: string;
       sortBy?: string;
-      order?: "asc" | "desc";
+      order?: 'asc' | 'desc';
     },
   ) {
     const {
       page = 1,
       limit = 10,
-      search = "",
-      sortBy = "createdAt",
-      order = "desc",
+      search = '',
+      sortBy = 'createdAt',
+      order = 'desc',
     } = params;
     const skip = (page - 1) * limit;
 
@@ -199,12 +199,12 @@ export class BookingsService {
 
     if (search) {
       where.OR = [
-        { bookingRef: { contains: search, mode: "insensitive" } },
+        { bookingRef: { contains: search, mode: 'insensitive' } },
         {
           items: {
             some: {
               slot: {
-                lane: { name: { contains: search, mode: "insensitive" } },
+                lane: { name: { contains: search, mode: 'insensitive' } },
               },
             },
           },
@@ -255,21 +255,105 @@ export class BookingsService {
         discountCode: true,
       },
     });
-    if (!booking) throw new AppError("Booking not found", 404);
+    if (!booking) throw new AppError('Booking not found', 404);
     return booking;
   }
+  async updateBooking(
+    bookingId: string,
+    userId: string,
+    data: {
+      slotId?: string;
+      notes?: string;
+    },
+  ) {
+    // Fetch existing booking
+    const booking = await prisma.booking.findFirst({
+      where: { id: bookingId, userId },
+      include: {
+        items: { include: { slot: { include: { lane: true } } } },
+        payment: true,
+      },
+    });
 
+    if (!booking) throw new AppError('Booking not found or access denied', 404);
+    if (booking.status !== 'CONFIRMED') {
+      throw new AppError('Only confirmed bookings can be updated', 400);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      let newSlot = null;
+
+      // Handle slot change (rescheduling)
+      if (data.slotId && data.slotId !== booking.items[0]?.slotId) {
+        newSlot = await tx.timeSlot.findUnique({
+          where: { id: data.slotId },
+          include: { lane: true },
+        });
+
+        if (!newSlot) throw new AppError('New time slot not found', 404);
+        if (!newSlot.isAvailable || newSlot.isBlocked) {
+          throw new AppError('Selected time slot is no longer available', 409);
+        }
+
+        // Restore old slot availability
+        await tx.timeSlot.update({
+          where: { id: booking.items[0].slotId },
+          data: { isAvailable: true },
+        });
+
+        // Block new slot
+        await tx.timeSlot.update({
+          where: { id: data.slotId },
+          data: { isAvailable: false },
+        });
+
+        // Update booking item with new slot
+        await tx.bookingItem.update({
+          where: { id: booking.items[0].id },
+          data: {
+            slotId: data.slotId,
+            unitPrice: newSlot.lane.hourlyRate,
+            subtotal: newSlot.lane.hourlyRate, // You can improve with membership logic
+          },
+        });
+
+        // Update booking amounts
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: {
+            totalAmount: newSlot.lane.hourlyRate,
+            finalAmount: newSlot.lane.hourlyRate, // Add discount logic later
+          },
+        });
+      }
+
+      // Update notes or other fields
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          notes: data.notes !== undefined ? data.notes : booking.notes,
+        },
+        include: {
+          items: { include: { slot: { include: { lane: true } } } },
+          payment: true,
+          user: true,
+        },
+      });
+
+      return updatedBooking;
+    });
+  }
   async cancelBooking(id: string, userId: string) {
     const booking = await prisma.booking.findFirst({
       where: { id, userId },
       include: { items: true, payment: true },
     });
 
-    if (!booking) throw new AppError("Booking not found", 404);
-    if (booking.status === "CANCELLED")
-      throw new AppError("Booking already cancelled", 400);
-    if (booking.status === "COMPLETED")
-      throw new AppError("Cannot cancel a completed booking", 400);
+    if (!booking) throw new AppError('Booking not found', 404);
+    if (booking.status === 'CANCELLED')
+      throw new AppError('Booking already cancelled', 400);
+    if (booking.status === 'COMPLETED')
+      throw new AppError('Cannot cancel a completed booking', 400);
 
     return prisma.$transaction(async (tx) => {
       // Restore slot availability
@@ -282,20 +366,20 @@ export class BookingsService {
       // Process refund if payment exists
       if (
         booking.payment?.stripePaymentIntentId &&
-        booking.payment.status === "SUCCEEDED"
+        booking.payment.status === 'SUCCEEDED'
       ) {
         await stripe.refunds.create({
           payment_intent: booking.payment.stripePaymentIntentId,
         });
         await tx.payment.update({
           where: { id: booking.payment.id },
-          data: { status: "REFUNDED" },
+          data: { status: 'REFUNDED' },
         });
       }
 
       const updated = await tx.booking.update({
         where: { id },
-        data: { status: "CANCELLED" },
+        data: { status: 'CANCELLED' },
         include: { items: { include: { slot: { include: { lane: true } } } } },
       });
 
@@ -315,7 +399,7 @@ export class BookingsService {
       },
     });
 
-    if (!booking) throw new AppError("Booking not found", 404);
+    if (!booking) throw new AppError('Booking not found', 404);
 
     return prisma.$transaction(async (tx) => {
       // Restore slot availability
@@ -344,7 +428,7 @@ export class BookingsService {
       });
 
       return {
-        message: "Booking deleted successfully",
+        message: 'Booking deleted successfully',
         bookingId: id,
       };
     });

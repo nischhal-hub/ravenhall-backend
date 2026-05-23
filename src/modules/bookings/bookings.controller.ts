@@ -70,7 +70,7 @@ export const getBookingById = async (
   next: NextFunction,
 ) => {
   try {
-    console;
+    console.log(req.params.id);
     const booking = await bookingsService.getBookingById(
       req.params.id,
       req.user!.id,
@@ -97,6 +97,25 @@ export const cancelBooking = async (
   }
 };
 
+export const updateBooking = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { slotId, notes } = req.body;
+
+    const booking = await bookingsService.updateBooking(
+      req.params.id,
+      req.user!.id,
+      { slotId, notes }
+    );
+
+    sendSuccess(res, booking, "Booking updated successfully");
+  } catch (error) {
+    next(error);
+  }
+};
 export const deleteBooking = async (
   req: AuthRequest,
   res: Response,

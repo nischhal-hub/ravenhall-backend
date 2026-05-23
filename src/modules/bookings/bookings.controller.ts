@@ -1,8 +1,8 @@
-import { Response, NextFunction } from 'express';
-import { BookingsService } from './bookings.service';
-import { AuthRequest } from '../../middleware/auth.middleware';
-import { sendSuccess, sendCreated } from '../../utils/apiResponse';
-import { getPaginationParams } from '../../utils/pagination';
+import { Response, NextFunction } from "express";
+import { BookingsService } from "./bookings.service";
+import { AuthRequest } from "../../middleware/auth.middleware";
+import { sendSuccess, sendCreated } from "../../utils/apiResponse";
+import { getPaginationParams } from "../../utils/pagination";
 
 const bookingsService = new BookingsService();
 
@@ -13,7 +13,7 @@ export const createBooking = async (
 ) => {
   try {
     const booking = await bookingsService.createBooking(req.user!.id, req.body);
-    sendCreated(res, booking, 'Booking created successfully');
+    sendCreated(res, booking, "Booking created successfully");
   } catch (error) {
     next(error);
   }
@@ -26,13 +26,13 @@ export const getAllBookings = async (
   try {
     const pagination = getPaginationParams(req.query);
 
-    const { search = '', sortBy = 'createdAt', order = 'desc' } = req.query;
+    const { search = "", sortBy = "createdAt", order = "desc" } = req.query;
 
     const result = await bookingsService.getAllBookings({
       ...pagination,
       search: search as string,
       sortBy: sortBy as string,
-      order: order as 'asc' | 'desc',
+      order: order as "asc" | "desc",
     });
 
     sendSuccess(res, result);
@@ -49,13 +49,13 @@ export const getMyBookings = async (
     const pagination = getPaginationParams(req.query);
 
     // Extract query parameters (same as getAllBookings)
-    const { search = '', sortBy = 'createdAt', order = 'desc' } = req.query;
+    const { search = "", sortBy = "createdAt", order = "desc" } = req.query;
 
     const result = await bookingsService.getMyBookings(req.user!.id, {
       ...pagination,
       search: search as string,
       sortBy: sortBy as string,
-      order: order as 'asc' | 'desc',
+      order: order as "asc" | "desc",
     });
 
     sendSuccess(res, result);
@@ -73,7 +73,7 @@ export const getBookingById = async (
     console.log(req.params.id);
     const booking = await bookingsService.getBookingById(
       req.params.id,
-      req.user!.id,
+      // req.user!.id,
     );
     sendSuccess(res, booking);
   } catch (error) {
@@ -91,7 +91,7 @@ export const cancelBooking = async (
       req.params.id,
       req.user!.id,
     );
-    sendSuccess(res, booking, 'Booking cancelled successfully');
+    sendSuccess(res, booking, "Booking cancelled successfully");
   } catch (error) {
     next(error);
   }
@@ -100,7 +100,7 @@ export const cancelBooking = async (
 export const updateBooking = async (
   req: AuthRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   try {
     const { slotId, notes } = req.body;
@@ -108,7 +108,7 @@ export const updateBooking = async (
     const booking = await bookingsService.updateBooking(
       req.params.id,
       req.user!.id,
-      { slotId, notes }
+      { slotId, notes },
     );
 
     sendSuccess(res, booking, "Booking updated successfully");
@@ -123,7 +123,7 @@ export const deleteBooking = async (
 ) => {
   try {
     const result = await bookingsService.deleteBooking(req.params.id);
-    sendSuccess(res, result, 'Booking deleted successfully');
+    sendSuccess(res, result, "Booking deleted successfully");
   } catch (error) {
     next(error);
   }

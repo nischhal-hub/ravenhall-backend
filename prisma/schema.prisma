@@ -157,10 +157,45 @@ model BookingItem {
   @@index([slotId])
 }
 
+// model Payment {
+//   id                    String        @id @default(cuid())
+//   bookingId             String        @unique
+//   booking               Booking       @relation(fields: [bookingId], references: [id])
+//   stripePaymentIntentId String        @unique
+//   amount                Float
+//   currency              String        @default("aud")
+//   status                PaymentStatus @default(PENDING)
+//   refundAmount          Float?
+//   stripeRefundId        String?
+//   paidAt                DateTime?
+//   createdAt             DateTime      @default(now())
+//   updatedAt             DateTime      @updatedAt
+
+//   @@index([stripePaymentIntentId])
+// }
+
+// model Membership {
+//   id          String         @id @default(cuid())
+//   userId      String         @unique
+//   user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+//   plan        MembershipPlan
+//   discountPct Float
+//   startDate   DateTime
+//   endDate     DateTime
+//   isActive    Boolean        @default(true)
+//   createdAt   DateTime       @default(now())
+//   updatedAt   DateTime       @updatedAt
+
+//   @@index([userId, isActive])
+// }
 model Payment {
   id                    String        @id @default(cuid())
-  bookingId             String        @unique
-  booking               Booking       @relation(fields: [bookingId], references: [id])
+  bookingId             String?       @unique
+  booking               Booking?      @relation(fields: [bookingId], references: [id])
+
+  membershipId          String?        @unique
+  membership            Membership?   @relation(fields: [membershipId], references: [id])
+
   stripePaymentIntentId String        @unique
   amount                Float
   currency              String        @default("aud")
@@ -172,6 +207,8 @@ model Payment {
   updatedAt             DateTime      @updatedAt
 
   @@index([stripePaymentIntentId])
+  @@index([membershipId])
+  @@index([bookingId])
 }
 
 model Membership {
@@ -183,6 +220,10 @@ model Membership {
   startDate   DateTime
   endDate     DateTime
   isActive    Boolean        @default(true)
+  
+  // New: Payment relation
+  payment     Payment?
+
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 

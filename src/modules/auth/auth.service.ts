@@ -146,7 +146,7 @@ export class AuthService {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return; // Do not reveal whether email exists
 
-    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetToken = crypto.randomInt(100000, 999999).toString();
     const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await prisma.user.update({

@@ -64,14 +64,14 @@ export class EmailService {
   }
 
   async sendPasswordReset(email: string, firstName: string, token: string) {
-    const url = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
+    console.log(`Sending password reset email to ${email} with token ${token}`);
     await this.send(
       email,
       "Reset your password — Ravenhall Indoor Cricket Centre",
       `<h2>Hi ${firstName},</h2>
        <p>Click the link below to reset your password:</p>
-       <a href="${url}">Reset Password</a>
-       <p>This link expires in 1 hour. If you did not request this, please ignore.</p>`,
+       <h1>${token}</h1>
+       <p>This token expires in 1 hour. If you did not request this, please ignore.</p>`,
     );
   }
 }

@@ -1,13 +1,13 @@
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
-import { prisma } from '../../config/database';
-import { AppError } from '../../utils/AppError';
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { prisma } from "../../config/database";
+import { AppError } from "../../utils/AppError";
 import {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
-} from '../../utils/jwt';
-import { EmailService } from '../notifications/email.service';
+} from "../../utils/jwt";
+import { EmailService } from "../notifications/email.service";
 
 const emailService = new EmailService();
 
@@ -22,13 +22,13 @@ export class AuthService {
     const existing = await prisma.user.findUnique({
       where: { email: data.email },
     });
-    if (existing) throw new AppError('Email already registered', 409);
+    if (existing) throw new AppError("Email already registered", 409);
 
     const hashedPassword = await bcrypt.hash(
       data.password,
       Number(process.env.BCRYPT_SALT_ROUNDS) || 12,
     );
-    const emailVerifyToken = crypto.randomBytes(32).toString('hex');
+    const emailVerifyToken = crypto.randomInt(100000, 999999).toString();
 
     const user = await prisma.user.create({
       data: {
@@ -55,10 +55,10 @@ export class AuthService {
 
   async login(data: { email: string; password: string }) {
     const user = await prisma.user.findUnique({ where: { email: data.email } });
-    if (!user) throw new AppError('Invalid email or password', 401);
+    if (!user) throw new AppError("Invalid email or password", 401);
 
     const isPasswordValid = await bcrypt.compare(data.password, user.password);
-    if (!isPasswordValid) throw new AppError('Invalid email or password', 401);
+    if (!isPasswordValid) throw new AppError("Invalid email or password", 401);
 
     const tokenPayload = {
       userId: user.id,
@@ -94,11 +94,11 @@ export class AuthService {
   }
 
   async refreshAccessToken(token: string) {
-    if (!token) throw new AppError('Refresh token required', 401);
+    if (!token) throw new AppError("Refresh token required", 401);
 
     const stored = await prisma.refreshToken.findUnique({ where: { token } });
     if (!stored || stored.expiresAt < new Date()) {
-      throw new AppError('Invalid or expired refresh token', 401);
+      throw new AppError("Invalid or expired refresh token", 401);
     }
 
     const payload = verifyRefreshToken(token);
@@ -126,7 +126,7 @@ export class AuthService {
         membership: true,
       },
     });
-    if (!user) throw new AppError('User not found', 404);
+    if (!user) throw new AppError("User not found", 404);
     return user;
   }
 
@@ -134,7 +134,7 @@ export class AuthService {
     const user = await prisma.user.findFirst({
       where: { emailVerifyToken: token },
     });
-    if (!user) throw new AppError('Invalid verification token', 400);
+    if (!user) throw new AppError("Invalid verification token", 400);
 
     await prisma.user.update({
       where: { id: user.id },
@@ -146,7 +146,7 @@ export class AuthService {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return; // Do not reveal whether email exists
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetToken = crypto.randomInt(100000, 999999).toString();
     const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await prisma.user.update({
@@ -164,7 +164,7 @@ export class AuthService {
         resetTokenExpiry: { gt: new Date() },
       },
     });
-    if (!user) throw new AppError('Invalid or expired reset token', 400);
+    if (!user) throw new AppError("Invalid or expired reset token", 400);
 
     const hashedPassword = await bcrypt.hash(
       newPassword,
@@ -207,7 +207,7 @@ export class AuthService {
         },
 
         bookings: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: { createdAt: "desc" },
           include: {
             items: {
               include: {
@@ -226,7 +226,7 @@ export class AuthService {
         },
 
         notifications: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: { createdAt: "desc" },
           take: 20,
         },
       },

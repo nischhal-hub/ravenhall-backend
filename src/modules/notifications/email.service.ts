@@ -13,19 +13,20 @@ export class EmailService {
   }
 
   async sendEmailVerification(email: string, firstName: string, token: string) {
-    const url = `${process.env.CLIENT_URL}/verify-email/${token}`;
     await this.send(
       email,
       "Verify your email — Ravenhall Indoor Cricket Centre",
       `<h2>Hi ${firstName},</h2>
-       <p>Please verify your email by clicking the link below:</p>
-       <a href="${url}">Verify Email</a>
-       <p>This link expires in 24 hours.</p>`
+       <p>Here is your 6 digit verification code.</p>
+      <h1>${token}</h1>
+       `,
     );
   }
 
   async sendBookingConfirmation(booking: any) {
-    const user = await prisma.user.findUnique({ where: { id: booking.userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: booking.userId },
+    });
     if (!user) return;
 
     await this.send(
@@ -34,7 +35,7 @@ export class EmailService {
       `<h2>Hi ${user.firstName},</h2>
        <p>Your booking <strong>${booking.bookingRef}</strong> has been confirmed.</p>
        <p>Total paid: <strong>$${booking.finalAmount.toFixed(2)} AUD</strong></p>
-       <p>Thank you for booking with Ravenhall Indoor Cricket Centre.</p>`
+       <p>Thank you for booking with Ravenhall Indoor Cricket Centre.</p>`,
     );
 
     await prisma.notification.create({
@@ -58,19 +59,19 @@ export class EmailService {
       `Booking Cancelled — ${bookingRef}`,
       `<h2>Hi ${user.firstName},</h2>
        <p>Your booking <strong>${bookingRef}</strong> has been cancelled.</p>
-       <p>If you paid online, a refund will be processed within 5–10 business days.</p>`
+       <p>If you paid online, a refund will be processed within 5–10 business days.</p>`,
     );
   }
 
   async sendPasswordReset(email: string, firstName: string, token: string) {
-    const url = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
+    console.log(`Sending password reset email to ${email} with token ${token}`);
     await this.send(
       email,
       "Reset your password — Ravenhall Indoor Cricket Centre",
       `<h2>Hi ${firstName},</h2>
        <p>Click the link below to reset your password:</p>
-       <a href="${url}">Reset Password</a>
-       <p>This link expires in 1 hour. If you did not request this, please ignore.</p>`
+       <h1>${token}</h1>
+       <p>This token expires in 1 hour. If you did not request this, please ignore.</p>`,
     );
   }
 }

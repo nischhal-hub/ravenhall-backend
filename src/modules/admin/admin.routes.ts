@@ -35,7 +35,7 @@ router.patch(
 
 // ── Lanes ─────────────────────────────────────────────────────────────────
 router.post('/lanes', requireRole('ADMIN'), createLane);
-router.put('/lanes/:id', requireRole('ADMIN', 'STAFF'), updateLane);
+router.patch('/lanes/:id', requireRole('ADMIN', 'STAFF'), updateLane);
 router.delete('/lanes/:id', requireRole('ADMIN'), deleteLane);
 
 // ── Slots ─────────────────────────────────────────────────────────────────

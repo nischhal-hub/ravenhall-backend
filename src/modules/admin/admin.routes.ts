@@ -19,6 +19,7 @@ import {
   getSlots,
 } from './admin.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
+import { uploadLaneImage } from '../../middleware/upload.middleware';
 
 const router: ExpressRouter = Router();
 
@@ -34,8 +35,13 @@ router.patch(
 );
 
 // ── Lanes ─────────────────────────────────────────────────────────────────
-router.post('/lanes', requireRole('ADMIN'), createLane);
-router.patch('/lanes/:id', requireRole('ADMIN', 'STAFF'), updateLane);
+router.post('/lanes', requireRole('ADMIN'), uploadLaneImage, createLane);
+router.patch(
+  '/lanes/:id',
+  requireRole('ADMIN', 'STAFF'),
+  uploadLaneImage,
+  updateLane,
+);
 router.delete('/lanes/:id', requireRole('ADMIN'), deleteLane);
 
 // ── Slots ─────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { AppError } from "../utils/AppError";
 import { logger } from "../config/logger";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
+import { MulterError } from "multer";
 
 export const errorHandler = (
   err: Error,
@@ -17,6 +18,18 @@ export const errorHandler = (
     return res.status(err.statusCode).json({
       status: "error",
       message: err.message,
+    });
+  }
+
+  // Multer upload errors
+  if (err instanceof MulterError) {
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "Image must be smaller than 5MB"
+        : err.message;
+    return res.status(400).json({
+      status: "error",
+      message,
     });
   }
 

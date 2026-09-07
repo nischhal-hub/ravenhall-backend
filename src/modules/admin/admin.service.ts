@@ -2,6 +2,7 @@ import { BookingStatus, Prisma, Role } from "@prisma/client";
 import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
+import { deleteImageFromCloudinary } from "../../utils/cloudinaryUpload";
 import {
   BookingStats,
   CustomerSummary,
@@ -98,7 +99,14 @@ export class AdminService {
   ) {
     const lane = await prisma.lane.findUnique({ where: { id } });
     if (!lane) throw new AppError("Lane not found", 404);
-    return prisma.lane.update({ where: { id }, data: data as any });
+
+    const updated = await prisma.lane.update({ where: { id }, data: data as any });
+
+    if (data.imageUrl && lane.imageUrl && lane.imageUrl !== data.imageUrl) {
+      await deleteImageFromCloudinary(lane.imageUrl);
+    }
+
+    return updated;
   }
 
   async deleteLane(id: string) {

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AdminService } from './admin.service';
 import { sendSuccess, sendCreated } from '../../utils/apiResponse';
 import { getPaginationParams } from '../../utils/pagination';
+import { uploadImageToCloudinary } from '../../utils/cloudinaryUpload';
 
 const adminService = new AdminService();
 
@@ -42,13 +43,26 @@ export const updateBookingStatus = async (
   }
 };
 
+const coerceLaneFields = (body: Record<string, unknown>) => {
+  const data = { ...body };
+  if (data.capacity !== undefined) data.capacity = Number(data.capacity);
+  if (data.hourlyRate !== undefined) data.hourlyRate = Number(data.hourlyRate);
+  if (data.isActive !== undefined) data.isActive = data.isActive === 'true' || data.isActive === true;
+  return data;
+};
+
 export const createLane = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    const lane = await adminService.createLane(req.body);
+    const data = coerceLaneFields(req.body);
+    if (req.file) {
+      const { secureUrl } = await uploadImageToCloudinary(req.file.buffer);
+      data.imageUrl = secureUrl;
+    }
+    const lane = await adminService.createLane(data as any);
     sendCreated(res, lane, 'Lane created successfully');
   } catch (error) {
     next(error);
@@ -61,7 +75,12 @@ export const updateLane = async (
   next: NextFunction,
 ) => {
   try {
-    const lane = await adminService.updateLane(req.params.id, req.body);
+    const data = coerceLaneFields(req.body);
+    if (req.file) {
+      const { secureUrl } = await uploadImageToCloudinary(req.file.buffer);
+      data.imageUrl = secureUrl;
+    }
+    const lane = await adminService.updateLane(req.params.id, data as any);
     sendSuccess(res, lane);
   } catch (error) {
     next(error);

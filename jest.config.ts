@@ -11,7 +11,7 @@ const config: Config = {
     "!src/**/*.d.ts",
     "!src/tests/**",
   ],
-  setupFilesAfterFramework: [],
+  setupFilesAfterEnv: [],
   verbose: true,
   forceExit: true,
   clearMocks: true,

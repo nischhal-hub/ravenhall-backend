@@ -22,6 +22,7 @@ const prisma = new PrismaClient({
 
 const SALT_ROUNDS = 12;
 
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const log = (e: string, k: string) => console.log(`  ✓  [${e}] ${k}`);

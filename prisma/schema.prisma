@@ -36,6 +36,19 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+enum PaymentMethod {
+  STRIPE
+  CASH
+  CARD
+  BANK_TRANSFER
+  OTHER
+}
+
+enum BookingSource {
+  ONLINE
+  POS
+}
+
 enum MembershipPlan {
   CASUAL
   MONTHLY
@@ -68,7 +81,8 @@ model User {
   resetToken       String?
   resetTokenExpiry DateTime?
   refreshTokens    RefreshToken[]
-  bookings         Booking[]
+  bookings         Booking[]      @relation("CustomerBookings")
+  staffBookings    Booking[]      @relation("StaffBookings")
   membership       Membership?
   notifications    Notification[]
   createdAt        DateTime     @default(now())
@@ -125,7 +139,7 @@ model Booking {
   id            String        @id @default(cuid())
   bookingRef    String        @unique  // RIC-2026-XXXXX
   userId        String
-  user          User          @relation(fields: [userId], references: [id])
+  user          User          @relation("CustomerBookings", fields: [userId], references: [id])
   status        BookingStatus @default(PENDING)
   totalAmount   Float
   discountAmount Float        @default(0)
@@ -135,12 +149,17 @@ model Booking {
   payment       Payment?
   discountCode  DiscountCode? @relation(fields: [discountCodeId], references: [id])
   discountCodeId String?
+  source        BookingSource @default(ONLINE)
+  bookedById    String?
+  bookedBy      User?         @relation("StaffBookings", fields: [bookedById], references: [id])
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   @@index([userId, status])
   @@index([createdAt])
   @@index([bookingRef])
+  @@index([source])
+  @@index([bookedById])
 }
 
 model BookingItem {
@@ -196,7 +215,8 @@ model Payment {
   membershipId          String?        @unique
   membership            Membership?   @relation(fields: [membershipId], references: [id])
 
-  stripePaymentIntentId String        @unique
+  stripePaymentIntentId String?       @unique
+  paymentMethod         PaymentMethod @default(STRIPE)
   amount                Float
   currency              String        @default("aud")
   status                PaymentStatus @default(PENDING)

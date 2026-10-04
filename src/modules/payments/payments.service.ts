@@ -19,7 +19,7 @@ export class PaymentsService {
       where: { bookingId },
     });
 
-    if (existingPayment) {
+    if (existingPayment?.stripePaymentIntentId) {
       const intent = await stripe.paymentIntents.retrieve(
         existingPayment.stripePaymentIntentId
       );

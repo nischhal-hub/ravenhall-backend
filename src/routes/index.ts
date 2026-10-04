@@ -9,6 +9,7 @@ import discountRoutes from '../modules/discounts/discounts.routes';
 import notificationRoutes from '../modules/notifications/notifications.routes';
 import adminRoutes from '../modules/admin/admin.routes';
 import userRoutes from '../modules/user/user.routes'; // Import user routes
+import posRoutes from '../modules/pos/pos.routes';
 
 const router: ExpressRouter = Router();
 
@@ -20,7 +21,8 @@ router.use('/memberships', membershipRoutes);
 router.use('/discount', discountRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/admin', adminRoutes);
-router.use('/user', userRoutes); 
+router.use('/user', userRoutes);
+router.use('/pos', posRoutes);
 
 // API docs
 router.get('/', (_req, res) => {

@@ -10,6 +10,8 @@ import notificationRoutes from '../modules/notifications/notifications.routes';
 import adminRoutes from '../modules/admin/admin.routes';
 import userRoutes from '../modules/user/user.routes'; // Import user routes
 import posRoutes from '../modules/pos/pos.routes';
+import expenseRouter, { expenseCategoryRouter } from '../modules/expenses/expenses.routes';
+import reportsRouter from '../modules/reports/reports.routes';
 
 const router: ExpressRouter = Router();
 
@@ -23,6 +25,10 @@ router.use('/notifications', notificationRoutes);
 router.use('/admin', adminRoutes);
 router.use('/user', userRoutes);
 router.use('/pos', posRoutes);
+router.use('/expenses', expenseRouter);
+router.use('/expense-categories', expenseCategoryRouter);
+router.use('/reports', reportsRouter);
+router.use('/reports/revenue', reportsRouter);
 
 // API docs
 router.get('/', (_req, res) => {

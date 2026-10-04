@@ -9,7 +9,7 @@ export const uploadImageToCloudinary = (
 ): Promise<{ secureUrl: string; publicId: string }> => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image" },
+      { folder, resource_type: "auto" },
       (error, result) => {
         if (error || !result) {
           return reject(new AppError("Image upload failed", 502));

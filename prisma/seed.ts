@@ -15,6 +15,7 @@ import {
   PaymentStatus,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedExpenses } from './seed-expenses';
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['warn', 'error'],
@@ -491,6 +492,7 @@ async function main() {
 
   await seedUpcomingSlots(lanes);
   await seedHistoricalBookings(lanes, customerIds, codes);
+  await seedExpenses();
 
   console.log('\n✅  Seed complete!');
   console.log('   admin@ravenhallcricket.com.au  /  Admin@123');

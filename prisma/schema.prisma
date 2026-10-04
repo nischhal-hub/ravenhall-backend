@@ -85,6 +85,7 @@ model User {
   staffBookings    Booking[]      @relation("StaffBookings")
   membership       Membership?
   notifications    Notification[]
+  createdExpenses  Expense[]      @relation("CreatedExpenses")
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -279,4 +280,38 @@ model Notification {
   createdAt DateTime           @default(now())
 
   @@index([userId])
+}
+
+model ExpenseCategory {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  isDefault   Boolean   @default(false)
+  expenses    Expense[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([name])
+}
+
+model Expense {
+  id              String          @id @default(cuid())
+  title           String
+  amount          Float
+  categoryId      String
+  category        ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  description     String?
+  expenseDate     DateTime        @default(now())
+  paymentMethod   PaymentMethod?  @default(OTHER)
+  receiptUrl      String?
+  receiptPublicId String?
+  createdById     String
+  createdBy       User            @relation("CreatedExpenses", fields: [createdById], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([expenseDate])
+  @@index([categoryId])
+  @@index([createdById])
+  @@index([title])
 }

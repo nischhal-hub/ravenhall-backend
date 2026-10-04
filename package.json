@@ -12,6 +12,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "prisma:seed:expenses": "ts-node prisma/seed-expenses.ts",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {

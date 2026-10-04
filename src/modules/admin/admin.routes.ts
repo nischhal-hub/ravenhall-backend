@@ -8,7 +8,6 @@ import {
   deleteLane,
   blockSlots,
   unblockSlots,
-  getRevenueReport,
   getAllUsers,
   updateUserRole,
   createDiscountCode,
@@ -20,6 +19,8 @@ import {
 } from './admin.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
 import { uploadLaneImage } from '../../middleware/upload.middleware';
+import expenseRouter, { expenseCategoryRouter } from '../expenses/expenses.routes';
+import reportsRouter from '../reports/reports.routes';
 
 const router: ExpressRouter = Router();
 
@@ -49,8 +50,13 @@ router.get('/slots', getSlots);
 router.post('/slots/block', requireRole('ADMIN', 'STAFF'), blockSlots);
 router.post('/slots/unblock', requireRole('ADMIN', 'STAFF'), unblockSlots);
 
+// ── Expenses & Categories ─────────────────────────────────────────────────
+router.use('/expenses', expenseRouter);
+router.use('/expense-categories', expenseCategoryRouter);
+
 // ── Reports ───────────────────────────────────────────────────────────────
-router.get('/reports/revenue', requireRole('ADMIN'), getRevenueReport);
+router.use('/reports', reportsRouter);
+router.use('/reports/revenue', reportsRouter);
 
 // ── Users ─────────────────────────────────────────────────────────────────
 router.get('/users', requireRole('ADMIN'), getAllUsers);

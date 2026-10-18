@@ -3,6 +3,7 @@ import { AppError } from '../../utils/AppError';
 import { generateBookingRef } from '../../utils/bookingRef';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { stripe } from '../../config/stripe';
+import { logger } from '../../config/logger';
 import { EmailService } from '../notifications/email.service';
 import { Prisma } from '@prisma/client';
 
@@ -355,7 +356,31 @@ export class BookingsService {
     if (booking.status === 'COMPLETED')
       throw new AppError('Cannot cancel a completed booking', 400);
 
-    return prisma.$transaction(async (tx) => {
+    // Refund via Stripe before touching the DB, outside the transaction so a
+    // slow/failed Stripe call can't hit the transaction timeout.
+    let refundId: string | undefined;
+    if (
+      booking.payment?.stripePaymentIntentId &&
+      booking.payment.status === 'SUCCEEDED'
+    ) {
+      try {
+        const refund = await stripe.refunds.create({
+          payment_intent: booking.payment.stripePaymentIntentId,
+        });
+        refundId = refund.id;
+      } catch (error: any) {
+        logger.error(
+          `Stripe refund failed for booking ${booking.bookingRef}: ${error?.message}`,
+          error,
+        );
+        throw new AppError(
+          `Refund failed: ${error?.message ?? 'payment provider error'}`,
+          502,
+        );
+      }
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
       // Restore slot availability
       const slotIds = booking.items.map((item) => item.slotId);
       await tx.timeSlot.updateMany({
@@ -363,32 +388,38 @@ export class BookingsService {
         data: { isAvailable: true },
       });
 
-      // Process refund if payment exists
-      if (
-        booking.payment?.stripePaymentIntentId &&
-        booking.payment.status === 'SUCCEEDED'
-      ) {
-        await stripe.refunds.create({
-          payment_intent: booking.payment.stripePaymentIntentId,
-        });
+      if (refundId && booking.payment) {
         await tx.payment.update({
           where: { id: booking.payment.id },
-          data: { status: 'REFUNDED' },
+          data: {
+            status: 'REFUNDED',
+            refundAmount: booking.payment.amount,
+            stripeRefundId: refundId,
+          },
         });
       }
 
-      const updated = await tx.booking.update({
+      return tx.booking.update({
         where: { id },
         data: { status: 'CANCELLED' },
         include: { items: { include: { slot: { include: { lane: true } } } } },
       });
+    });
 
+    // Email is best-effort; never fail the cancellation because of it
+    try {
       await emailService.sendBookingCancellation(
         booking.userId,
         booking.bookingRef,
       );
-      return updated;
-    });
+    } catch (error) {
+      logger.error(
+        `Failed to send cancellation email for ${booking.bookingRef}`,
+        error,
+      );
+    }
+
+    return updated;
   }
   async deleteBooking(id: string) {
     const booking = await prisma.booking.findFirst({

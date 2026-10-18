@@ -54,3 +54,20 @@ export const getSlotsForLane = async (
     next(error);
   }
 };
+
+export const getAvailability = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { date, type } = req.query;
+    const result = await lanesService.getAvailability({
+      date: date as string | undefined,
+      type: type as string | undefined,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+};

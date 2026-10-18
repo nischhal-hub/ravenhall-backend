@@ -21,3 +21,28 @@ describe("GET /api/lanes/:id/slots", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("GET /api/lanes/availability", () => {
+  it("should require a date", async () => {
+    const res = await request(app).get("/api/lanes/availability");
+    expect(res.status).toBe(400);
+  });
+
+  it("should reject a malformed date", async () => {
+    const res = await request(app).get("/api/lanes/availability?date=tomorrow");
+    expect(res.status).toBe(400);
+  });
+
+  it("should reject an unknown lane type", async () => {
+    const res = await request(app).get(
+      "/api/lanes/availability?date=2030-01-01&type=SWIMMING",
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("should return no lanes for a date in the past", async () => {
+    const res = await request(app).get("/api/lanes/availability?date=2000-01-01");
+    expect(res.status).toBe(200);
+    expect(res.body.data.lanes).toEqual([]);
+  });
+});

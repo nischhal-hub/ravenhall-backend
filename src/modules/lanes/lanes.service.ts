@@ -49,7 +49,7 @@ export class LanesService {
   async getLaneById(id: string) {
     const lane = await prisma.lane.findUnique({
       where: { id },
-      include: { slots: true },
+      include: { slots: { orderBy: [{ date: 'asc' }, { startTime: 'asc' }] } },
     });
     if (!lane || !lane.isActive) throw new AppError('Lane not found', 404);
     return lane;

@@ -9,21 +9,28 @@ import { Prisma } from '@prisma/client';
 
 const emailService = new EmailService();
 
+// Flat per-booking equipment fee. Keep in sync with EQUIPMENT_FEE in the
+// frontend (lib/booking.ts). Discounts apply to lane hire only, not the fee.
+export const EQUIPMENT_FEE = 10;
+
 export class BookingsService {
   async createBooking(
     userId: string,
-    data: { slotId: string; discountCode?: string },
+    data: { slotId: string; duration?: number; discountCode?: string },
   ) {
+    const duration = data.duration ?? 1;
+
     // All reads outside the transaction
-    const slot = await prisma.timeSlot.findUnique({
+    const startSlot = await prisma.timeSlot.findUnique({
       where: { id: data.slotId },
       include: { lane: true },
     });
 
-    if (!slot) throw new AppError('Time slot not found', 404);
-    if (!slot.isAvailable || slot.isBlocked) {
-      throw new AppError('This slot is no longer available', 409);
-    }
+    if (!startSlot) throw new AppError('Time slot not found', 404);
+
+    // A multi-hour session is `duration` back-to-back hourly slots on the same
+    // lane and day, starting at the chosen slot.
+    const slots = await this.resolveConsecutiveSlots(startSlot, duration);
 
     const membership = await prisma.membership.findFirst({
       where: { userId, isActive: true, endDate: { gt: new Date() } },
@@ -52,43 +59,50 @@ export class BookingsService {
       discountPct = Math.max(discountPct, membership.discountPct);
     }
 
-    const unitPrice = slot.lane.hourlyRate;
-    const discountAmount = (unitPrice * discountPct) / 100;
-    const finalAmount = unitPrice - discountAmount;
+    const unitPrice = startSlot.lane.hourlyRate;
+    const laneHire = unitPrice * slots.length;
+    const totalAmount = laneHire + EQUIPMENT_FEE;
+    const discountAmount = (laneHire * discountPct) / 100;
+    const finalAmount = totalAmount - discountAmount;
+    const itemSubtotal = unitPrice - (unitPrice * discountPct) / 100;
 
     // Transaction: only fast atomic writes, no includes
     const bookingId = await prisma.$transaction(
       async (tx) => {
-        const freshSlot = await tx.timeSlot.findUnique({
-          where: { id: data.slotId },
-          select: { isAvailable: true, isBlocked: true },
+        const slotIds = slots.map((s) => s.id);
+
+        // Re-check every slot inside the transaction, and claim them atomically:
+        // the conditional updateMany only matches slots that are still free.
+        const claimed = await tx.timeSlot.updateMany({
+          where: { id: { in: slotIds }, isAvailable: true, isBlocked: false },
+          data: { isAvailable: false },
         });
 
-        if (!freshSlot || !freshSlot.isAvailable || freshSlot.isBlocked) {
-          throw new AppError('This slot is no longer available', 409);
+        if (claimed.count !== slotIds.length) {
+          throw new AppError(
+            slotIds.length > 1
+              ? 'One or more of the selected slots is no longer available'
+              : 'This slot is no longer available',
+            409,
+          );
         }
 
         const booking = await tx.booking.create({
           data: {
             bookingRef: generateBookingRef(),
             userId,
-            totalAmount: unitPrice,
+            totalAmount,
             discountAmount,
             finalAmount,
             discountCodeId: discountCodeRecord?.id,
             items: {
-              create: {
+              create: slots.map((slot) => ({
                 slotId: slot.id,
                 unitPrice,
-                subtotal: finalAmount,
-              },
+                subtotal: itemSubtotal,
+              })),
             },
           },
-        });
-
-        await tx.timeSlot.update({
-          where: { id: slot.id },
-          data: { isAvailable: false },
         });
 
         if (discountCodeRecord) {
@@ -106,9 +120,57 @@ export class BookingsService {
     // Fetch full booking with relations after transaction closes
     return prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { items: { include: { slot: { include: { lane: true } } } } },
+      include: {
+        items: {
+          include: { slot: { include: { lane: true } } },
+          orderBy: { slot: { startTime: 'asc' } },
+        },
+      },
     });
   }
+
+  /**
+   * Returns `duration` consecutive, bookable slots on the same lane and date,
+   * beginning with `startSlot`. Throws 409 if any are taken, blocked or missing.
+   */
+  private async resolveConsecutiveSlots(
+    startSlot: { id: string; laneId: string; date: Date; startTime: string },
+    duration: number,
+  ) {
+    const candidates = await prisma.timeSlot.findMany({
+      where: {
+        laneId: startSlot.laneId,
+        date: startSlot.date,
+        startTime: { gte: startSlot.startTime },
+      },
+      orderBy: { startTime: 'asc' },
+      take: duration,
+    });
+
+    const unavailable = () =>
+      new AppError(
+        duration > 1
+          ? `The ${duration}-hour session is not available from this start time`
+          : 'This slot is no longer available',
+        409,
+      );
+
+    if (candidates.length < duration) throw unavailable();
+
+    candidates.forEach((slot, i) => {
+      const prev = candidates[i - 1];
+      if (
+        !slot.isAvailable ||
+        slot.isBlocked ||
+        (prev && prev.endTime !== slot.startTime)
+      ) {
+        throw unavailable();
+      }
+    });
+
+    return candidates;
+  }
+
   async getAllBookings(params: {
     page: number;
     limit: number;
@@ -280,6 +342,16 @@ export class BookingsService {
     if (booking.status !== 'CONFIRMED') {
       throw new AppError('Only confirmed bookings can be updated', 400);
     }
+    if (
+      data.slotId &&
+      booking.items.length > 1 &&
+      data.slotId !== booking.items[0]?.slotId
+    ) {
+      throw new AppError(
+        'Multi-hour bookings cannot be rescheduled; cancel and rebook instead',
+        400,
+      );
+    }
 
     return prisma.$transaction(async (tx) => {
       let newSlot = null;
@@ -322,8 +394,8 @@ export class BookingsService {
         await tx.booking.update({
           where: { id: bookingId },
           data: {
-            totalAmount: newSlot.lane.hourlyRate,
-            finalAmount: newSlot.lane.hourlyRate, // Add discount logic later
+            totalAmount: newSlot.lane.hourlyRate + EQUIPMENT_FEE,
+            finalAmount: newSlot.lane.hourlyRate + EQUIPMENT_FEE, // Add discount logic later
           },
         });
       }
@@ -404,7 +476,7 @@ export class BookingsService {
         data: { status: 'CANCELLED' },
         include: { items: { include: { slot: { include: { lane: true } } } } },
       });
-    });
+    }, { timeout: 15000 });
 
     // Email is best-effort; never fail the cancellation because of it
     try {

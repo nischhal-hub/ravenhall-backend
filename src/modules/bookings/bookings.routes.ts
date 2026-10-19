@@ -26,6 +26,7 @@ router.get('/:id', getBookingById);
 router.patch('/:id', authenticate, updateBooking);
 router.patch('/:id/status', updateBookingStatus);
 router.patch('/:id/cancel', cancelBooking);
-router.delete('/:id', deleteBooking);
+// Hard delete is an admin operation; customers cancel instead
+router.delete('/:id', requireRole('ADMIN'), deleteBooking);
 
 export default router;

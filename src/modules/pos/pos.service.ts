@@ -4,6 +4,7 @@ import { BookingSource, PaymentMethod, PaymentStatus, Prisma } from '@prisma/cli
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/AppError';
 import { generateBookingRef } from '../../utils/bookingRef';
+import { EQUIPMENT_FEE } from '../../utils/pricing';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { EmailService } from '../notifications/email.service';
 import { logger } from '../../config/logger';
@@ -284,6 +285,33 @@ export class PosService {
   /**
    * Calculate POS price breakdown in real time for cart / checkout
    */
+  /**
+   * Slots on the same lane and day must be back-to-back (no gaps), so a
+   * multi-hour session is one continuous block. Different lanes/days are fine:
+   * staff may book several lanes at once for a group.
+   */
+  private assertBackToBack(
+    slots: { laneId: string; date: Date; startTime: string; endTime: string; lane: { name: string } }[],
+  ) {
+    const groups = new Map<string, typeof slots>();
+    for (const slot of slots) {
+      const key = `${slot.laneId}|${slot.date.toISOString()}`;
+      groups.set(key, [...(groups.get(key) ?? []), slot]);
+    }
+
+    for (const group of groups.values()) {
+      const sorted = [...group].sort((a, b) => a.startTime.localeCompare(b.startTime));
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i - 1].endTime !== sorted[i].startTime) {
+          throw new AppError(
+            `Slots on ${sorted[i].lane.name} must be back-to-back (gap between ${sorted[i - 1].endTime} and ${sorted[i].startTime})`,
+            400,
+          );
+        }
+      }
+    }
+  }
+
   async calculatePrice(input: CalculatePriceInput) {
     const { slotIds, customerId, discountCode, customDiscountPct = 0, customDiscountAmount = 0 } = input;
 
@@ -307,6 +335,8 @@ export class PosService {
       throw new AppError(`The following slots are not available: ${times}`, 409);
     }
 
+    this.assertBackToBack(slots);
+
     // Subtotal calculation
     const items = slots.map((s) => ({
       slotId: s.id,
@@ -320,7 +350,11 @@ export class PosService {
       subtotal: s.lane.hourlyRate,
     }));
 
-    const totalAmount = items.reduce((acc, curr) => acc + curr.unitPrice, 0);
+    // Lane hire is discountable; the flat equipment fee is added on top and
+    // is never discounted (same rule as online bookings).
+    const laneHire = items.reduce((acc, curr) => acc + curr.unitPrice, 0);
+    const equipmentFee = EQUIPMENT_FEE;
+    const totalAmount = laneHire + equipmentFee;
 
     // Membership discount
     let membershipDiscountPct = 0;
@@ -362,15 +396,17 @@ export class PosService {
 
     // Determine highest percentage discount
     const applicablePct = Math.max(membershipDiscountPct, codeDiscountPct, customDiscountPct);
-    const pctDiscountAmount = Math.round(((totalAmount * applicablePct) / 100) * 100) / 100;
+    const pctDiscountAmount = Math.round(((laneHire * applicablePct) / 100) * 100) / 100;
 
     // Additional flat discount (staff override)
-    const flatDiscountAmount = Math.min(totalAmount - pctDiscountAmount, customDiscountAmount);
-    const totalDiscountAmount = Math.min(totalAmount, pctDiscountAmount + flatDiscountAmount);
+    const flatDiscountAmount = Math.min(laneHire - pctDiscountAmount, customDiscountAmount);
+    const totalDiscountAmount = Math.min(laneHire, pctDiscountAmount + flatDiscountAmount);
     const finalAmount = Math.max(0, Math.round((totalAmount - totalDiscountAmount) * 100) / 100);
 
     return {
       items,
+      laneHire,
+      equipmentFee,
       totalAmount,
       discountBreakdown: {
         membership: {
@@ -500,14 +536,13 @@ export class PosService {
     // 3. Atomic Database Transaction
     const bookingId = await prisma.$transaction(
       async (tx) => {
-        // Re-check slot availability inside transaction
-        const freshSlots = await tx.timeSlot.findMany({
-          where: { id: { in: slotIds } },
-          select: { id: true, isAvailable: true, isBlocked: true },
+        // Claim every slot atomically: the conditional update only matches
+        // slots that are still free, so a concurrent booking can't double-sell.
+        const claimed = await tx.timeSlot.updateMany({
+          where: { id: { in: slotIds }, isAvailable: true, isBlocked: false },
+          data: { isAvailable: false },
         });
-
-        const unavailable = freshSlots.filter((s) => !s.isAvailable || s.isBlocked);
-        if (unavailable.length > 0) {
+        if (claimed.count !== slotIds.length) {
           throw new AppError('One or more selected slots are no longer available', 409);
         }
 
@@ -532,12 +567,6 @@ export class PosService {
               })),
             },
           },
-        });
-
-        // Mark slots as unavailable
-        await tx.timeSlot.updateMany({
-          where: { id: { in: slotIds } },
-          data: { isAvailable: false },
         });
 
         // Increment discount code usage if applicable
@@ -735,6 +764,10 @@ export class PosService {
       },
       items,
       pricing: {
+        laneHire: booking.items.reduce((sum, item) => sum + item.unitPrice, 0),
+        // 0 for older POS bookings made before the fee existed
+        equipmentFee:
+          booking.totalAmount - booking.items.reduce((sum, item) => sum + item.unitPrice, 0),
         subtotal: booking.totalAmount,
         discount: booking.discountAmount,
         discountCode: booking.discountCode?.code || null,

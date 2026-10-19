@@ -70,10 +70,9 @@ export const getBookingById = async (
   next: NextFunction,
 ) => {
   try {
-    console.log(req.params.id);
     const booking = await bookingsService.getBookingById(
       req.params.id,
-      // req.user!.id,
+      req.user!,
     );
     sendSuccess(res, booking);
   } catch (error) {

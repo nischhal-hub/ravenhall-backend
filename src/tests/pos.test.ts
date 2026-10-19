@@ -3,6 +3,7 @@ import app from '../app';
 import { prisma } from '../config/database';
 import { generateAccessToken } from '../utils/jwt';
 import bcrypt from 'bcryptjs';
+import { EQUIPMENT_FEE } from '../utils/pricing';
 
 jest.setTimeout(45000);
 
@@ -206,9 +207,46 @@ describe('POS Module', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('success');
-      expect(res.body.data.totalAmount).toBe(expectedRate);
-      expect(res.body.data.finalAmount).toBe(Math.round(expectedRate * 0.9 * 100) / 100);
+      // Equipment fee is added on top; the discount applies to lane hire only
+      expect(res.body.data.laneHire).toBe(expectedRate);
+      expect(res.body.data.equipmentFee).toBe(EQUIPMENT_FEE);
+      expect(res.body.data.totalAmount).toBe(expectedRate + EQUIPMENT_FEE);
+      expect(res.body.data.finalAmount).toBe(
+        Math.round((expectedRate * 0.9 + EQUIPMENT_FEE) * 100) / 100,
+      );
       expect(res.body.data.discountBreakdown.appliedPct).toBe(10);
+    });
+
+    it('should reject slots on the same lane that are not back-to-back', async () => {
+      // 10:00 (test slot) and 12:00 leave an 11:00-12:00 gap
+      const gapSlot = await prisma.timeSlot.upsert({
+        where: {
+          laneId_date_startTime: {
+            laneId: testLaneId,
+            date: new Date(testDate),
+            startTime: '12:00',
+          },
+        },
+        update: { isAvailable: true, isBlocked: false },
+        create: {
+          laneId: testLaneId,
+          date: new Date(testDate),
+          startTime: '12:00',
+          endTime: '13:00',
+        },
+      });
+
+      try {
+        const res = await request(app)
+          .post('/api/pos/calculate-price')
+          .set('Authorization', `Bearer ${staffToken}`)
+          .send({ slotIds: [testSlotId, gapSlot.id], customerId: testCustomerId });
+
+        expect(res.status).toBe(400);
+        expect(res.body.message).toMatch(/back-to-back/);
+      } finally {
+        await prisma.timeSlot.delete({ where: { id: gapSlot.id } });
+      }
     });
   });
 

@@ -1,17 +1,14 @@
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/AppError';
 import { generateBookingRef } from '../../utils/bookingRef';
+import { EQUIPMENT_FEE } from '../../utils/pricing';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { stripe } from '../../config/stripe';
 import { logger } from '../../config/logger';
 import { EmailService } from '../notifications/email.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 
 const emailService = new EmailService();
-
-// Flat per-booking equipment fee. Keep in sync with EQUIPMENT_FEE in the
-// frontend (lib/booking.ts). Discounts apply to lane hire only, not the fee.
-export const EQUIPMENT_FEE = 10;
 
 export class BookingsService {
   async createBooking(
@@ -308,9 +305,15 @@ export class BookingsService {
     };
   }
 
-  async getBookingById(id: string) {
+  /**
+   * Customers may only read their own bookings; staff and admins can read any.
+   * A booking that belongs to someone else returns 404 (not 403) so IDs can't
+   * be probed.
+   */
+  async getBookingById(id: string, requester: { id: string; role: Role }) {
+    const isStaff = requester.role === 'ADMIN' || requester.role === 'STAFF';
     const booking = await prisma.booking.findFirst({
-      where: { id },
+      where: { id, ...(isStaff ? {} : { userId: requester.id }) },
       include: {
         items: { include: { slot: { include: { lane: true } } } },
         payment: true,

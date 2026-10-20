@@ -352,9 +352,10 @@ export class PosService {
 
     // Lane hire is discountable; the flat equipment fee is added on top and
     // is never discounted (same rule as online bookings).
-    const laneHire = items.reduce((acc, curr) => acc + curr.unitPrice, 0);
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const laneHire = round2(items.reduce((acc, curr) => acc + curr.unitPrice, 0));
     const equipmentFee = EQUIPMENT_FEE;
-    const totalAmount = laneHire + equipmentFee;
+    const totalAmount = round2(laneHire + equipmentFee);
 
     // Membership discount
     let membershipDiscountPct = 0;
@@ -378,20 +379,25 @@ export class PosService {
     let codeDiscountPct = 0;
     let discountCodeRecord = null;
 
-    if (discountCode) {
-      discountCodeRecord = await prisma.discountCode.findUnique({
-        where: { code: discountCode.toUpperCase() },
+    if (discountCode?.trim()) {
+      const record = await prisma.discountCode.findUnique({
+        where: { code: discountCode.trim().toUpperCase() },
       });
 
+      // Only a valid code may be applied (and later counted as used); an
+      // unknown/expired/exhausted code must not silently price at full rate.
       if (
-        discountCodeRecord &&
-        discountCodeRecord.isActive &&
-        discountCodeRecord.validFrom <= new Date() &&
-        discountCodeRecord.validTo >= new Date() &&
-        (!discountCodeRecord.maxUses || discountCodeRecord.usedCount < discountCodeRecord.maxUses)
+        !record ||
+        !record.isActive ||
+        record.validFrom > new Date() ||
+        record.validTo < new Date() ||
+        (record.maxUses && record.usedCount >= record.maxUses)
       ) {
-        codeDiscountPct = discountCodeRecord.discountPct;
+        throw new AppError('Invalid or expired discount code', 400);
       }
+
+      discountCodeRecord = record;
+      codeDiscountPct = record.discountPct;
     }
 
     // Determine highest percentage discount
@@ -399,8 +405,8 @@ export class PosService {
     const pctDiscountAmount = Math.round(((laneHire * applicablePct) / 100) * 100) / 100;
 
     // Additional flat discount (staff override)
-    const flatDiscountAmount = Math.min(laneHire - pctDiscountAmount, customDiscountAmount);
-    const totalDiscountAmount = Math.min(laneHire, pctDiscountAmount + flatDiscountAmount);
+    const flatDiscountAmount = round2(Math.min(laneHire - pctDiscountAmount, customDiscountAmount));
+    const totalDiscountAmount = round2(Math.min(laneHire, pctDiscountAmount + flatDiscountAmount));
     const finalAmount = Math.max(0, Math.round((totalAmount - totalDiscountAmount) * 100) / 100);
 
     return {

@@ -1,0 +1,34 @@
+# Calls the backend's scheduled-jobs endpoint (booking reminders + unpaid-hold expiry)
+# every 5 minutes. GitHub may start scheduled runs a few minutes late; the jobs
+# catch up on the next run. Needs repository secrets:
+#   JOBS_URL     e.g. https://api.example.com/api/internal/jobs/run
+#   CRON_SECRET  same value as the API's CRON_SECRET
+name: Scheduled jobs
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run scheduled jobs
+        env:
+          JOBS_URL: ${{ secrets.JOBS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$JOBS_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "JOBS_URL or CRON_SECRET secret not set; skipping."
+            exit 0
+          fi
+          curl --fail-with-body --silent --show-error --max-time 120 \
+            -X POST -H "x-cron-secret: $CRON_SECRET" "$JOBS_URL"

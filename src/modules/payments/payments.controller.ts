@@ -30,7 +30,10 @@ export const confirmPayment = async (
   next: NextFunction,
 ) => {
   try {
-    const result = await paymentsService.confirmPayment(req.body.bookingId);
+    const result = await paymentsService.confirmPayment(
+      req.user!.id,
+      req.body.bookingId,
+    );
     sendSuccess(res, result);
   } catch (error) {
     next(error);

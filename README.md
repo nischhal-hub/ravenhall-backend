@@ -45,6 +45,7 @@ npm run dev
 | PATCH | /api/notifications/:id/read | Mark one as read | Yes |
 | PATCH | /api/notifications/read-all | Mark all as read | Yes |
 | POST | /api/payments/intent | Create Stripe intent | Customer |
+| POST | /api/payments/confirm | Check a booking's payment with Stripe after checkout (body: `{ bookingId }`) | Customer |
 | POST | /api/payments/webhook | Stripe webhook | Stripe |
 | GET | /api/memberships | List plans | No |
 | GET | /api/memberships/my | My membership | Customer |

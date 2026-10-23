@@ -16,6 +16,15 @@ router.post(
   createPaymentIntent,
 );
 
+// Called when the customer returns from Stripe; checks the real payment status
+router.post(
+  '/confirm',
+  authenticate,
+  paymentRateLimiter,
+  validate(createPaymentIntentSchema),
+  confirmPayment,
+);
+
 // Webhook is registered directly in app.ts (needs raw body)
 
 export default router;

@@ -546,6 +546,22 @@ export class BookingsService {
       refunded: Boolean(refundId),
     });
 
+    // An unpaid checkout left open could still be paid from another tab after
+    // the booking is cancelled. Close it; failure only needs logging.
+    if (
+      booking.payment?.stripePaymentIntentId &&
+      booking.payment.status !== 'SUCCEEDED'
+    ) {
+      const intentId = booking.payment.stripePaymentIntentId;
+      Promise.resolve()
+        .then(() => stripe.paymentIntents.cancel(intentId))
+        .catch((error: any) =>
+          logger.warn(
+            `Could not cancel open payment for booking ${booking.bookingRef}: ${error?.message}`,
+          ),
+        );
+    }
+
     return updated;
   }
 

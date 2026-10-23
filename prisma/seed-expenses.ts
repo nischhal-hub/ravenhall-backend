@@ -1,8 +1,9 @@
 import { PrismaClient, PaymentMethod } from '@prisma/client';
+import { ExpensesService } from '../src/modules/expenses/expenses.service';
 
 const prisma = new PrismaClient();
 
-async function seedExpenses() {
+export async function seedExpenses() {
   console.log('--- Seeding Expenses for Ravenhall Indoor Cricket Centre ---');
 
   // 1. Find Admin user
@@ -14,7 +15,9 @@ async function seedExpenses() {
     throw new Error('Admin user not found in database. Please ensure users exist.');
   }
 
-  // 2. Fetch all categories
+  // 2. Fetch all categories. The app creates the defaults lazily, so on a
+  // fresh/cleared DB they don't exist yet — create them the same way the app does.
+  await new ExpensesService().seedDefaultCategoriesIfEmpty();
   const categories = await prisma.expenseCategory.findMany();
   const catMap = new Map(categories.map((c) => [c.name, c.id]));
 
@@ -239,11 +242,15 @@ async function seedExpenses() {
   console.log(`Total Expense Records: ${total}, Total Spent: $${sum._sum.amount?.toFixed(2)}`);
 }
 
-seedExpenses()
-  .catch((err) => {
-    console.error('Seed failed:', err);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+// Imported by seed.ts (which handles errors); only self-run when executed
+// directly via `pnpm prisma:seed:expenses`
+if (require.main === module) {
+  seedExpenses()
+    .catch((err) => {
+      console.error('Seed failed:', err);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

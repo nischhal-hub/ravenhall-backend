@@ -9,7 +9,11 @@ describe("GET /api/lanes", () => {
     const res = await request(app).get("/api/lanes");
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("success");
-    expect(Array.isArray(res.body.data)).toBe(true);
+    // Paginated since 7bd4272: { lanes, meta }
+    expect(Array.isArray(res.body.data.lanes)).toBe(true);
+    expect(res.body.data.meta).toEqual(
+      expect.objectContaining({ total: expect.any(Number) }),
+    );
   });
 });
 

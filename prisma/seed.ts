@@ -202,6 +202,7 @@ async function clearAll() {
   await prisma.refreshToken.deleteMany();
   await prisma.discountCode.deleteMany();
   await prisma.lane.deleteMany();
+  await prisma.expense.deleteMany(); // references User (createdBy)
   await prisma.user.deleteMany();
   console.log('  ✓  All tables cleared');
 }

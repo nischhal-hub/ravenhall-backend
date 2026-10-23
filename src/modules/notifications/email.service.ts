@@ -192,6 +192,38 @@ export class EmailService {
     }
   }
 
+  /** Unpaid hold expired. Keyed per booking, so retries never send twice. */
+  async sendBookingExpired(bookingId: string): Promise<EmailOutcome> {
+    try {
+      const loaded = await this.loadBookingForEmail(bookingId);
+      if (!loaded) return "skipped";
+      return await this.send(
+        loaded.booking.user.email,
+        emailTemplates.bookingExpired(loaded.booking.user.firstName, loaded.details),
+        { userId: loaded.booking.user.id, dedupeKey: `email:booking-expired:${bookingId}` },
+      );
+    } catch (error) {
+      logger.error(`Failed to prepare expiry email for booking ${bookingId}:`, error);
+      return "failed";
+    }
+  }
+
+  /** Payment arrived after expiry and the slot was gone, so it was refunded */
+  async sendLatePaymentRefunded(bookingId: string): Promise<EmailOutcome> {
+    try {
+      const loaded = await this.loadBookingForEmail(bookingId);
+      if (!loaded) return "skipped";
+      return await this.send(
+        loaded.booking.user.email,
+        emailTemplates.latePaymentRefunded(loaded.booking.user.firstName, loaded.details),
+        { userId: loaded.booking.user.id, dedupeKey: `email:booking-late-refund:${bookingId}` },
+      );
+    } catch (error) {
+      logger.error(`Failed to prepare late-refund email for booking ${bookingId}:`, error);
+      return "failed";
+    }
+  }
+
   async sendPasswordReset(email: string, firstName: string, token: string) {
     await this.send(email, emailTemplates.passwordReset(firstName, token));
   }

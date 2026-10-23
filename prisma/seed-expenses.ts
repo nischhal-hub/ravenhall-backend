@@ -32,7 +32,7 @@ export async function seedExpenses() {
   const now = new Date();
   const daysAgo = (days: number): Date => {
     const d = new Date(now);
-    d.setDate(d.getDate() - days);
+    d.setUTCDate(d.getUTCDate() - days);
     return d;
   };
 

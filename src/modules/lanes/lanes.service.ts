@@ -1,6 +1,7 @@
 import { LaneType, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/AppError';
+import { businessClock } from '../../utils/businessTime';
 
 export class LanesService {
   async getAllLanes(params: {
@@ -89,7 +90,7 @@ export class LanesService {
     }
 
     // Hide slots that have already started when the date is "today" at the centre.
-    const { today, time: nowTime } = centreNow();
+    const { date: today, time: nowTime } = businessClock();
     if (date < today) return { date, lanes: [] };
     const onlyFuture = date === today;
 
@@ -126,21 +127,4 @@ export class LanesService {
   }
 }
 
-/** Current date (YYYY-MM-DD) and time (HH:mm) in the centre's timezone. */
-function centreNow() {
-  const timeZone = process.env.CENTRE_TIMEZONE || 'Australia/Perth';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date());
-  const get = (t: string) => parts.find((p) => p.type === t)!.value;
-  return {
-    today: `${get('year')}-${get('month')}-${get('day')}`,
-    time: `${get('hour')}:${get('minute')}`,
-  };
-}
+

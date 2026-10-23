@@ -1,6 +1,8 @@
 // Reusable transactional email templates. Every template returns
 // { subject, html, text } so clients without HTML support still get a readable message.
 
+import { formatCalendarDate } from '../../utils/businessTime';
+
 export interface EmailContent {
   subject: string;
   html: string;
@@ -32,16 +34,8 @@ const clientUrl = (path: string) => {
   return base ? `${base}${path}` : undefined;
 };
 
-const formatDate = (date?: Date | string) =>
-  date
-    ? new Date(date).toLocaleDateString('en-AU', {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-        timeZone: 'UTC',
-      })
-    : undefined;
+// Slot dates are calendar days (DATE column); format them without shifting
+const formatDate = (date?: Date | string) => (date ? formatCalendarDate(date) : undefined);
 
 const formatMoney = (amount: number) => `$${amount.toFixed(2)} AUD`;
 
@@ -263,6 +257,58 @@ export const emailTemplates = {
         refundLine,
         '',
         'If you have any questions, just reply to this email.',
+      ]),
+    };
+  },
+
+  /** Unpaid hold ran out; the slot was released and nothing was charged */
+  bookingExpired(firstName: string, booking: BookingEmailDetails): EmailContent {
+    const url = clientUrl('/lanes');
+    const line =
+      "We didn't receive payment in time, so we released the slot for other players. You haven't been charged.";
+    return {
+      subject: `Booking Expired — ${booking.bookingRef}`,
+      html: layout(
+        `Hi ${firstName},`,
+        `<p>${line}</p>
+         ${bookingTableHtml(booking)}
+         <p>You can book again any time. If the slot is still free, it only takes a minute.</p>`,
+        { label: 'Book again', url },
+      ),
+      text: textLayout([
+        `Hi ${firstName},`,
+        '',
+        line,
+        ...bookingTableText(booking),
+        '',
+        'You can book again any time. If the slot is still free, it only takes a minute.',
+        url && `Book again: ${url}`,
+      ]),
+    };
+  },
+
+  /** Payment arrived after the hold expired and the slot was taken: full refund */
+  latePaymentRefunded(firstName: string, booking: BookingEmailDetails): EmailContent {
+    const url = clientUrl('/lanes');
+    const line =
+      'Your payment arrived after the booking hold had expired, and the slot had already been taken. We have refunded the full amount to your original payment method. It should appear within 5–10 business days.';
+    return {
+      subject: `Payment Refunded — ${booking.bookingRef}`,
+      html: layout(
+        `Hi ${firstName},`,
+        `<p>${line}</p>
+         ${bookingTableHtml(booking)}
+         <p>Sorry for the inconvenience. Please choose another time.</p>`,
+        { label: 'Book another time', url },
+      ),
+      text: textLayout([
+        `Hi ${firstName},`,
+        '',
+        line,
+        ...bookingTableText(booking),
+        '',
+        'Sorry for the inconvenience. Please choose another time.',
+        url && `Book another time: ${url}`,
       ]),
     };
   },

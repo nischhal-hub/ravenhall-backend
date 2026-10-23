@@ -2,6 +2,7 @@ import { Expense, ExpenseCategory, PaymentMethod, Prisma } from '@prisma/client'
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/AppError';
 import { buildPaginationMeta } from '../../utils/pagination';
+import { periodKey } from '../../utils/businessTime';
 import {
   deleteImageFromCloudinary,
   uploadImageToCloudinary,
@@ -436,22 +437,9 @@ export class ExpensesService {
     }).sort((a, b) => b.total - a.total);
 
     // Timeline grouping
-    const getKey = (date: Date): string => {
-      const d = new Date(date);
-      const year = d.getFullYear();
-      const month = d.getMonth() + 1;
-      const day = d.getDate();
-
-      if (groupBy === 'year') return `${year}`;
-      if (groupBy === 'month') return `${year}-${String(month).padStart(2, '0')}`;
-      if (groupBy === 'week') {
-        const firstJan = new Date(d.getFullYear(), 0, 1);
-        const days = Math.floor((d.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000));
-        const week = Math.ceil((days + firstJan.getDay() + 1) / 7);
-        return `${year}-W${String(week).padStart(2, '0')}`;
-      }
-      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    };
+    // expenseDate is a calendar day, so group it as stored (never by server TZ)
+    const getKey = (date: Date): string =>
+      periodKey(new Date(date), groupBy, { calendar: true });
 
     const timelineMap: Record<string, { total: number; count: number }> = {};
     for (const exp of expenses) {

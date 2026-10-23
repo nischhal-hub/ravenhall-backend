@@ -99,6 +99,23 @@ export const verifyEmail = async (
   }
 };
 
+/** Same message whether or not the account exists or is verified */
+export const RESEND_VERIFICATION_MESSAGE =
+  "If that email belongs to an account that still needs verifying, we've sent a new code.";
+
+export const resendVerification = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    await authService.resendVerification(req.body.email);
+    sendSuccess(res, null, RESEND_VERIFICATION_MESSAGE);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const forgotPassword = async (
   req: Request,
   res: Response,

@@ -167,6 +167,8 @@ model Booking {
   @@index([bookingRef])
   @@index([source])
   @@index([bookedById])
+  // Unpaid-hold expiry: WHERE status = 'PENDING' AND createdAt < cutoff
+  @@index([status, createdAt])
 }
 
 model BookingItem {
@@ -325,4 +327,17 @@ model Expense {
   @@index([categoryId])
   @@index([createdById])
   @@index([title])
+}
+
+// Last run of each scheduled job (reminders, unpaid-hold expiry), so you can
+// see when the scheduler last ran and what it did.
+model JobRun {
+  name           String    @id
+  lastStartedAt  DateTime
+  lastFinishedAt DateTime?
+  lastStatus     String // "running" | "ok" | "error"
+  lastResult     Json?
+  lastError      String?
+  runCount       Int       @default(0)
+  updatedAt      DateTime  @updatedAt
 }

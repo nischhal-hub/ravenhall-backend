@@ -60,6 +60,8 @@ const pendingBooking = (overrides: Record<string, unknown> = {}) => ({
   bookingRef: 'RIC-2026-00001',
   userId: alice.id,
   status: 'PENDING',
+  source: 'ONLINE',
+  createdAt: new Date('2026-10-23T05:55:00.000Z'), // 5 min before NOW_BEFORE: hold still active
   finalAmount: 44,
   payment: null as unknown,
   items: [{ slot: { date: new Date('2026-10-23T00:00:00.000Z'), startTime: '14:00' } }],
@@ -194,7 +196,10 @@ describe('Confirming on return from Stripe', () => {
 
     expect(result.outcome).toBe('paid');
     expect(db.payment.updateMany).toHaveBeenCalledWith({
-      where: { stripePaymentIntentId: 'pi_old', status: { not: 'SUCCEEDED' } },
+      where: {
+        stripePaymentIntentId: 'pi_old',
+        status: { notIn: ['SUCCEEDED', 'REFUNDED', 'PARTIALLY_REFUNDED'] },
+      },
       data: expect.objectContaining({ status: 'SUCCEEDED' }),
     });
     expect(db.notification.createMany).toHaveBeenCalled(); // booking-confirmed notification
@@ -221,16 +226,30 @@ describe('Confirming on return from Stripe', () => {
     expect(db.booking.updateMany).not.toHaveBeenCalled();
   });
 
-  it('never revives a booking that was cancelled while paying', async () => {
+  it('never revives a booking a person cancelled while paying: it refunds once instead', async () => {
     db.booking.updateMany.mockResolvedValue({ count: 0 }); // no longer PENDING
-    db.booking.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+    db.booking.findUnique.mockResolvedValue({
+      ...pendingBooking({ payment: openPayment() }),
+      status: 'CANCELLED',
+      cancellationReason: 'Changed plans',
+      items: [{ slotId: 'slot-14', slot: { date: new Date('2026-10-23T00:00:00.000Z'), startTime: '14:00' } }],
+    });
+    (stripe.refunds.create as jest.Mock).mockResolvedValue({ id: 're_1' });
 
     await service.handleWebhookEvent({
       type: 'payment_intent.succeeded',
       data: { object: { id: 'pi_old', metadata: { bookingId: 'booking-1' } } },
     } as any);
 
-    expect(db.notification.createMany).not.toHaveBeenCalled();
+    expect(db.timeSlot.updateMany).not.toHaveBeenCalled(); // no re-claim
+    expect(stripe.refunds.create).toHaveBeenCalledWith(
+      { payment_intent: 'pi_old' },
+      { idempotencyKey: 'refund-booking-booking-1' },
+    );
+    expect(db.notification.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ dedupeKey: 'booking-late-refund:booking-1' })],
+      skipDuplicates: true,
+    });
   });
 });
 

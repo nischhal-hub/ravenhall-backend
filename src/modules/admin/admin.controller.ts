@@ -194,6 +194,19 @@ export const getAllUsers = async (
   }
 };
 
+export const getUserById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const user = await adminService.getUserById(req.params.id);
+    sendSuccess(res, user);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateUserRole = async (
   req: Request,
   res: Response,

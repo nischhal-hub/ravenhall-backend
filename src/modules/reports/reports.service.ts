@@ -12,49 +12,60 @@ import {
   RevenueTrendsFilter,
   RevenueTrendsResult,
 } from './reports.types';
+import {
+  periodKey,
+  businessToday,
+  endOfBusinessDay,
+  parseCalendarDate,
+  startOfBusinessDay,
+} from '../../utils/businessTime';
 
 export class ReportsService {
   /**
    * Helper: Parse and standardize date range boundaries
    */
-  private parseDateRange(from?: string, to?: string): { startDate: Date; endDate: Date } {
+  private parseDateRange(
+    from?: string,
+    to?: string,
+  ): {
+    startDate: Date;
+    endDate: Date;
+    calendarStart: Date;
+    calendarEnd: Date;
+    fromDay: string;
+    toDay: string;
+  } {
+    // Instants (payments): "from"/"to" are business-local days, so a payment at
+    // 00:30 in Kathmandu counts for that local day, whatever the server TZ is.
     const endDate = to
-      ? new Date(to.includes('T') ? to : `${to}T23:59:59.999Z`)
+      ? to.includes('T')
+        ? new Date(to)
+        : endOfBusinessDay(to)
       : new Date();
 
     const startDate = from
-      ? new Date(from.includes('T') ? from : `${from}T00:00:00.000Z`)
+      ? from.includes('T')
+        ? new Date(from)
+        : startOfBusinessDay(from)
       : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    return { startDate, endDate };
+    const fromDay = from?.includes('T') || !from ? businessToday(startDate) : from;
+    const toDay = to?.includes('T') || !to ? businessToday(endDate) : to;
+
+    // Calendar dates (expenseDate is a day, stored as UTC midnight)
+    const calendarStart = parseCalendarDate(fromDay);
+    const calendarEnd = new Date(parseCalendarDate(toDay).getTime() + 24 * 60 * 60 * 1000 - 1);
+
+    return { startDate, endDate, calendarStart, calendarEnd, fromDay, toDay };
   }
 
   /**
-   * Helper: Formats a date into a chronological grouping key
+   * Helper: Formats a date into a chronological grouping key.
+   * Payments are instants (grouped by business-local day); expenses are
+   * calendar days (`calendar = true`, read as-is). Never uses the server TZ.
    */
-  private getPeriodKey(date: Date, interval: GroupByInterval): string {
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = d.getMonth() + 1;
-    const day = d.getDate();
-
-    if (interval === 'year') {
-      return `${year}`;
-    }
-
-    if (interval === 'month') {
-      return `${year}-${String(month).padStart(2, '0')}`;
-    }
-
-    if (interval === 'week') {
-      const firstJan = new Date(year, 0, 1);
-      const days = Math.floor((d.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000));
-      const week = Math.ceil((days + firstJan.getDay() + 1) / 7);
-      return `${year}-W${String(week).padStart(2, '0')}`;
-    }
-
-    // default: 'day'
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  private getPeriodKey(date: Date, interval: GroupByInterval, calendar = false): string {
+    return periodKey(new Date(date), interval, { calendar });
   }
 
   /**
@@ -63,7 +74,8 @@ export class ReportsService {
    */
   async getRevenueReport(filter: RevenueReportFilter): Promise<RevenueReportResult> {
     const { from, to, groupBy = 'day' } = filter;
-    const { startDate, endDate } = this.parseDateRange(from, to);
+    const { startDate, endDate, calendarStart, calendarEnd, fromDay, toDay } =
+      this.parseDateRange(from, to);
 
     // 1. Fetch legitimate revenue transactions (SUCCEEDED or PARTIALLY_REFUNDED)
     const payments = await prisma.payment.findMany({
@@ -88,7 +100,7 @@ export class ReportsService {
     // 2. Fetch business expenses for the exact same date window
     const expenses = await prisma.expense.findMany({
       where: {
-        expenseDate: { gte: startDate, lte: endDate },
+        expenseDate: { gte: calendarStart, lte: calendarEnd },
       },
       include: {
         category: {
@@ -180,7 +192,7 @@ export class ReportsService {
       categoryMap[catId].count += 1;
 
       // Timeline mapping
-      const key = this.getPeriodKey(exp.expenseDate, groupBy);
+      const key = this.getPeriodKey(exp.expenseDate, groupBy, true);
       if (!timelineMap[key]) {
         timelineMap[key] = {
           period: key,
@@ -269,8 +281,8 @@ export class ReportsService {
 
     return {
       dateRange: {
-        from: startDate.toISOString().split('T')[0],
-        to: endDate.toISOString().split('T')[0],
+        from: fromDay,
+        to: toDay,
       },
       groupBy,
       summary: {

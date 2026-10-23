@@ -1,16 +1,11 @@
 import cron from "node-cron";
 import { prisma } from "../config/database";
 import { logger } from "../config/logger";
+import { businessToday, parseCalendarDate } from "../utils/businessTime";
 
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setUTCDate(result.getUTCDate() + days);
-  return result;
-}
-
-function toUtcStartOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setUTCHours(0, 0, 0, 0);
   return result;
 }
 
@@ -57,7 +52,8 @@ async function generateSlotsForDate(date: Date) {
 
 export async function generateSlotsForNextNDays(days = DAYS_AHEAD) {
   logger.info(`Generating slots for next ${days} days...`);
-  const today = toUtcStartOfDay(new Date());
+  // "Today" at the centre (not in UTC), as the UTC-midnight Date the DATE column expects
+  const today = parseCalendarDate(businessToday());
 
   for (let i = 0; i < days; i++) {
     const targetDate = addDays(today, i);

@@ -7,8 +7,16 @@ import { generateBookingRef } from '../../utils/bookingRef';
 import { EQUIPMENT_FEE } from '../../utils/pricing';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SLOT_STARTED_MESSAGE } from '../bookings/bookings.service';
+import { hasSlotStarted } from '../../utils/businessTime';
 
 const notificationsService = new NotificationsService();
+
+/** Minutes after a slot starts that the counter can still sell it (default: the whole hour) */
+function posWalkInGraceMinutes() {
+  const value = Number(process.env.POS_WALKIN_GRACE_MINUTES);
+  return Number.isFinite(value) && value >= 0 ? value : 60;
+}
 
 export interface PosCustomerInput {
   
@@ -332,6 +340,13 @@ export class PosService {
     if (unavailableSlots.length > 0) {
       const times = unavailableSlots.map((s) => `${s.lane.name} (${s.startTime}-${s.endTime})`).join(', ');
       throw new AppError(`The following slots are not available: ${times}`, 409);
+    }
+
+    // Walk-ins may take the hour already under way (grace from slot start),
+    // but never a slot that is over.
+    const grace = posWalkInGraceMinutes();
+    if (slots.some((s) => hasSlotStarted(s, new Date(), grace))) {
+      throw new AppError(SLOT_STARTED_MESSAGE, 422);
     }
 
     this.assertBackToBack(slots);

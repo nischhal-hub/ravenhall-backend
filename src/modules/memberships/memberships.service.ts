@@ -148,7 +148,8 @@ export class MembershipsService {
     // Activate / Upsert Membership
     const startDate = new Date();
     const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + planDetails.durationDays);
+    // UTC arithmetic so the result never depends on the server TZ
+    endDate.setUTCDate(endDate.getUTCDate() + planDetails.durationDays);
 
     const membership = await prisma.membership.upsert({
       where: { userId },

@@ -3,6 +3,13 @@ import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
 import { deleteImageFromCloudinary } from "../../utils/cloudinaryUpload";
+import {
+  businessTimeZone,
+  endOfBusinessDay,
+  periodKey,
+  startOfBusinessDay,
+  startOfBusinessMonth,
+} from "../../utils/businessTime";
 import { BookingActor, BookingsService } from "../bookings/bookings.service";
 import {
   BookingStats,
@@ -204,11 +211,18 @@ export class AdminService {
     const bookings = await prisma.booking.findMany({
       where: {
         status: "CONFIRMED",
+        // "from"/"to" days are business-local days
         createdAt: {
           gte: from
-            ? new Date(from)
+            ? from.includes("T")
+              ? new Date(from)
+              : startOfBusinessDay(from)
             : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-          lte: to ? new Date(to) : new Date(),
+          lte: to
+            ? to.includes("T")
+              ? new Date(to)
+              : endOfBusinessDay(to)
+            : new Date(),
         },
       },
       select: { finalAmount: true, createdAt: true },
@@ -218,34 +232,9 @@ export class AdminService {
     // ---------------------------
     // Helper: get group key
     // ---------------------------
-    const getKey = (date: Date) => {
-      const d = new Date(date);
-
-      const year = d.getFullYear();
-      const month = d.getMonth(); // 0-based
-      const day = d.getDate();
-
-      if (groupBy === "year") {
-        return `${year}`;
-      }
-
-      if (groupBy === "month") {
-        return `${year}-${String(month + 1).padStart(2, "0")}`;
-      }
-
-      if (groupBy === "week") {
-        // ISO week calculation (simple version)
-        const firstJan = new Date(d.getFullYear(), 0, 1);
-        const days = Math.floor(
-          (d.getTime() - firstJan.getTime()) / (24 * 60 * 60 * 1000),
-        );
-        const week = Math.ceil((days + firstJan.getDay() + 1) / 7);
-        return `${year}-W${week}`;
-      }
-
-      // default: day
-      return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    };
+    // Grouped by business-local day; week labels stay unpadded ("2026-W5")
+    const getKey = (date: Date) =>
+      periodKey(new Date(date), groupBy, { padWeek: false });
 
     // ---------------------------
     // Grouping
@@ -321,6 +310,73 @@ export class AdminService {
     };
   }
 
+  /**
+   * One user for the admin detail page. An explicit select, so the password
+   * hash, verification code and reset token can never leak.
+   */
+  async getUserById(id: string) {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        role: true,
+        isEmailVerified: true,
+        createdAt: true,
+        membership: {
+          select: { plan: true, isActive: true, discountPct: true, startDate: true, endDate: true },
+        },
+        _count: { select: { bookings: true } },
+        bookings: {
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: {
+            id: true,
+            bookingRef: true,
+            status: true,
+            source: true,
+            finalAmount: true,
+            createdAt: true,
+            items: {
+              take: 1,
+              orderBy: { slot: { startTime: "asc" } },
+              select: {
+                slot: {
+                  select: {
+                    date: true,
+                    startTime: true,
+                    endTime: true,
+                    lane: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!user) throw new AppError("User not found", 404);
+
+    const { _count, bookings, ...profile } = user;
+    return {
+      ...profile,
+      bookingCount: _count.bookings,
+      recentBookings: bookings.map(({ items, ...booking }) => {
+        const slot = items[0]?.slot;
+        return {
+          ...booking,
+          laneName: slot?.lane.name ?? null,
+          date: slot?.date ?? null,
+          startTime: slot?.startTime ?? null,
+          endTime: slot?.endTime ?? null,
+        };
+      }),
+    };
+  }
+
   async updateUserRole(id: string, role: Role) {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw new AppError("User not found", 404);
@@ -378,8 +434,9 @@ export class AdminService {
   async getDashboardData(): Promise<DashboardData> {
     try {
       const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      // Month boundaries at the centre, not in the server's timezone
+      const startOfMonth = startOfBusinessMonth(now);
+      const sixMonthsAgo = startOfBusinessMonth(now, -5);
 
       const [
         totalUsers,
@@ -421,7 +478,8 @@ export class AdminService {
         // Revenue Timeline (Last 6 months)
         prisma.$queryRaw<RawRevenueRow[]>`
           SELECT
-            DATE_TRUNC('month', b."createdAt") AS month,
+            -- createdAt is stored in UTC; bucket by the centre's calendar month
+            DATE_TRUNC('month', b."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${businessTimeZone()}) AS month,
             COUNT(DISTINCT b.id)::int AS bookings,
             COALESCE(SUM(b."finalAmount"), 0)::numeric AS revenue
           FROM "Booking" b

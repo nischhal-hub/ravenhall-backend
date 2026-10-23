@@ -12,7 +12,7 @@ import userRoutes from '../modules/user/user.routes'; // Import user routes
 import posRoutes from '../modules/pos/pos.routes';
 import expenseRouter, { expenseCategoryRouter } from '../modules/expenses/expenses.routes';
 import reportsRouter from '../modules/reports/reports.routes';
-import reminderJobRoutes from '../modules/notifications/reminders.routes';
+import jobRoutes from '../modules/jobs/jobs.routes';
 
 const router: ExpressRouter = Router();
 
@@ -31,7 +31,7 @@ router.use('/expense-categories', expenseCategoryRouter);
 router.use('/reports', reportsRouter);
 router.use('/reports/revenue', reportsRouter);
 // Scheduler-triggered jobs, secured by CRON_SECRET (no user auth)
-router.use('/internal/jobs', reminderJobRoutes);
+router.use('/internal/jobs', jobRoutes);
 
 // API docs
 router.get('/', (_req, res) => {

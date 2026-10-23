@@ -16,6 +16,11 @@ import {
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedExpenses } from './seed-expenses';
+import {
+  businessToday,
+  parseCalendarDate,
+  toUtcFromBusinessLocal,
+} from '../src/utils/businessTime';
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['warn', 'error'],
@@ -30,21 +35,17 @@ const log = (e: string, k: string) => console.log(`  ✓  [${e}] ${k}`);
 const rb = (min: number, max: number) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 
+// Calendar days at the centre as UTC-midnight Dates (what the DATE column
+// stores), so seeding gives the same dates whatever the machine's TZ is.
 function daysAgo(n: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return addDays(parseCalendarDate(businessToday()), -n);
 }
 function daysFromNow(n: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return addDays(parseCalendarDate(businessToday()), n);
 }
 function addDays(date: Date, n: number): Date {
   const d = new Date(date);
-  d.setDate(d.getDate() + n);
+  d.setUTCDate(d.getUTCDate() + n);
   return d;
 }
 function pick<T>(arr: T[]): T {
@@ -435,8 +436,11 @@ async function seedHistoricalBookings(
             ? BookingStatus.PENDING
             : BookingStatus.COMPLETED;
 
-      const createdAt = new Date(date);
-      createdAt.setHours(rb(8, 20), rb(0, 59), 0, 0);
+      // A business-local time of day on that calendar day, stored as UTC
+      const createdAt = toUtcFromBusinessLocal(
+        date,
+        `${String(rb(8, 20)).padStart(2, '0')}:${String(rb(0, 59)).padStart(2, '0')}`,
+      );
 
       batchBuf.push({
         bookingRef: ref(bookingIdx++),

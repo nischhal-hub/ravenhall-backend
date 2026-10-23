@@ -65,6 +65,38 @@ export class NotificationsService {
     );
   }
 
+  /** Unpaid hold expired and the slot was released (system, not a person) */
+  async createBookingExpired(
+    booking: { id: string; userId: string; bookingRef: string },
+    db: Db = prisma,
+  ) {
+    return this.createInApp(
+      {
+        userId: booking.userId,
+        title: `Booking ${booking.bookingRef} expired`,
+        body: `We didn't receive payment for booking #${booking.bookingRef} in time, so the slot was released. You haven't been charged. You can book again any time.`,
+        dedupeKey: `booking-expired:${booking.id}`,
+      },
+      db,
+    );
+  }
+
+  /** A payment arrived after the hold expired and the slot was gone: refunded */
+  async createLatePaymentRefunded(
+    booking: { id: string; userId: string; bookingRef: string },
+    db: Db = prisma,
+  ) {
+    return this.createInApp(
+      {
+        userId: booking.userId,
+        title: `Payment refunded for ${booking.bookingRef}`,
+        body: `Your payment for booking #${booking.bookingRef} arrived after the hold expired and the slot had been taken, so we refunded it in full. Please choose another time.`,
+        dedupeKey: `booking-late-refund:${booking.id}`,
+      },
+      db,
+    );
+  }
+
   /**
    * Booking confirmed event: in-app notification + confirmation email.
    * Call after the confirming transaction commits. Never throws.

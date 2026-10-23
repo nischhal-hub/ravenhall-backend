@@ -8,6 +8,23 @@ import { logger } from '../../config/logger';
 import { EmailService } from '../notifications/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BookingStatus, Prisma, Role } from '@prisma/client';
+import { hasSlotStarted } from '../../utils/businessTime';
+import { holdExpiresAt } from './booking-hold';
+
+/** User fields safe to return alongside a booking */
+export const SAFE_USER_SELECT = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  role: true,
+  isEmailVerified: true,
+  createdAt: true,
+} as const;
+
+export const SLOT_STARTED_MESSAGE =
+  'This time slot has already started. Please choose a later slot.';
 
 const emailService = new EmailService();
 const notificationsService = new NotificationsService();
@@ -50,6 +67,9 @@ export class BookingsService {
     });
 
     if (!startSlot) throw new AppError('Time slot not found', 404);
+    // Online and admin bookings can't start in the past. Walk-ins for the hour
+    // already under way go through POS, which has its own grace period.
+    if (hasSlotStarted(startSlot)) throw new AppError(SLOT_STARTED_MESSAGE, 422);
 
     // A multi-hour session is `duration` back-to-back hourly slots on the same
     // lane and day, starting at the chosen slot.
@@ -236,7 +256,7 @@ export class BookingsService {
       prisma.booking.findMany({
         where,
         include: {
-          user: true,
+          user: { select: SAFE_USER_SELECT },
           items: {
             include: {
               slot: {
@@ -342,12 +362,14 @@ export class BookingsService {
       include: {
         items: { include: { slot: { include: { lane: true } } } },
         payment: true,
-        user: true,
+        // Only what the pages show: never the password hash or codes/tokens
+        user: { select: SAFE_USER_SELECT },
         discountCode: true,
       },
     });
     if (!booking) throw new AppError('Booking not found', 404);
-    return booking;
+    // Server-provided deadline for the "pay within mm:ss" countdown
+    return { ...booking, holdExpiresAt: holdExpiresAt(booking)?.toISOString() ?? null };
   }
   async updateBooking(
     bookingId: string,
@@ -392,6 +414,7 @@ export class BookingsService {
         });
 
         if (!newSlot) throw new AppError('New time slot not found', 404);
+        if (hasSlotStarted(newSlot)) throw new AppError(SLOT_STARTED_MESSAGE, 422);
         if (!newSlot.isAvailable || newSlot.isBlocked) {
           throw new AppError('Selected time slot is no longer available', 409);
         }
@@ -437,13 +460,47 @@ export class BookingsService {
         include: {
           items: { include: { slot: { include: { lane: true } } } },
           payment: true,
-          user: true,
+          user: { select: SAFE_USER_SELECT },
         },
       });
 
       return updatedBooking;
     });
   }
+  /**
+   * Core of every cancellation (customer, staff, and the unpaid-hold expiry):
+   * flips the booking to CANCELLED only if it still matches `where`, then
+   * releases its slots. Returns false when nothing matched, e.g. a concurrent
+   * request or a payment webhook got there first.
+   */
+  async cancelInTransaction(
+    tx: Prisma.TransactionClient,
+    booking: { id: string; items: { slotId: string }[] },
+    opts: {
+      where: Prisma.BookingWhereInput;
+      cancelledById: string | null;
+      reason: string | null;
+    },
+  ) {
+    const { count } = await tx.booking.updateMany({
+      where: { ...opts.where, id: booking.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledById: opts.cancelledById,
+        cancellationReason: opts.reason,
+      },
+    });
+    if (count === 0) return false;
+
+    // Restore slot availability
+    await tx.timeSlot.updateMany({
+      where: { id: { in: booking.items.map((item) => item.slotId) } },
+      data: { isAvailable: true },
+    });
+    return true;
+  }
+
   /**
    * Single cancellation path for customers (own bookings) and staff (any booking).
    * Releases the slot, refunds Stripe payments, records who/why, notifies the user.
@@ -490,25 +547,14 @@ export class BookingsService {
       async (tx) => {
         // Conditional update: if a concurrent request already cancelled/completed
         // the booking, this matches nothing and the request gets a 409.
-        const { count } = await tx.booking.updateMany({
-          where: { id, status: { in: ['PENDING', 'CONFIRMED'] } },
-          data: {
-            status: 'CANCELLED',
-            cancelledAt: new Date(),
-            cancelledById: actor.id,
-            cancellationReason,
-          },
+        const cancelled = await this.cancelInTransaction(tx, booking, {
+          where: { status: { in: ['PENDING', 'CONFIRMED'] } },
+          cancelledById: actor.id,
+          reason: cancellationReason,
         });
-        if (count === 0) {
+        if (!cancelled) {
           throw new AppError('Booking has already been cancelled or completed', 409);
         }
-
-        // Restore slot availability
-        const slotIds = booking.items.map((item) => item.slotId);
-        await tx.timeSlot.updateMany({
-          where: { id: { in: slotIds } },
-          data: { isAvailable: true },
-        });
 
         if (refundId && booking.payment) {
           await tx.payment.update({
@@ -532,7 +578,7 @@ export class BookingsService {
           include: {
             items: { include: { slot: { include: { lane: true } } } },
             payment: true,
-            user: true,
+            user: { select: SAFE_USER_SELECT },
           },
         });
       },
@@ -598,7 +644,7 @@ export class BookingsService {
 
     return prisma.booking.findUniqueOrThrow({
       where: { id },
-      include: { user: true, items: true },
+      include: { user: { select: SAFE_USER_SELECT }, items: true },
     });
   }
   async deleteBooking(id: string) {

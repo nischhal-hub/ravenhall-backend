@@ -9,16 +9,21 @@ import {
   forgotPassword,
   resetPassword,
   verifyEmail,
+  resendVerification,
   getProfile,
 } from './auth.controller';
 import { authenticate } from '../../middleware/auth.middleware';
-import { authRateLimiter } from '../../middleware/rateLimiter.middleware';
+import {
+  authRateLimiter,
+  resendVerificationLimiters,
+} from '../../middleware/rateLimiter.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import {
   registerSchema,
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  resendVerificationSchema,
 } from './auth.validation';
 
 const router: ExpressRouter = Router();
@@ -30,6 +35,13 @@ router.post('/refresh', refreshToken);
 router.get('/me', authenticate, getMe);
 router.get('/profile', authenticate, getProfile);
 router.get('/verify-email/:token', verifyEmail);
+// 1 per 60 s and 5 per hour, per email and per IP; same response for any email
+router.post(
+  '/resend-verification',
+  validate(resendVerificationSchema),
+  ...resendVerificationLimiters,
+  resendVerification,
+);
 router.post(
   '/forgot-password',
   authRateLimiter,

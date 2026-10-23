@@ -3,10 +3,16 @@ import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { stripe } from "../../config/stripe";
 import { logger } from "../../config/logger";
-import { slotStartInstant } from "../../utils/businessTime";
+import { hasSlotStarted, slotStartInstant } from "../../utils/businessTime";
 import { NotificationsService } from "../notifications/notifications.service";
+import { EmailService } from "../notifications/email.service";
+import { EXPIRED_HOLD_REASON, holdExpiresAt } from "../bookings/booking-hold";
 
 const notificationsService = new NotificationsService();
+const emailService = new EmailService();
+
+/** Thrown inside the re-claim transaction to roll it back */
+class SlotsTaken extends Error {}
 
 /** What the customer should be told after returning from Stripe */
 export type PaymentOutcome = "paid" | "processing" | "failed" | "unpaid";
@@ -46,6 +52,17 @@ export class PaymentsService {
     const currency = (process.env.STRIPE_CURRENCY || "aud").toLowerCase();
     const existing = booking.payment;
 
+    // The unpaid hold has run out: the expiry job is about to release the slot
+    const assertHoldActive = () => {
+      const expiresAt = holdExpiresAt(booking);
+      if (expiresAt && expiresAt <= new Date()) {
+        throw new AppError(
+          "The hold on this booking has expired, so it can no longer be paid for. Please book again.",
+          409,
+        );
+      }
+    };
+
     if (existing?.stripePaymentIntentId) {
       let intent = await stripe.paymentIntents.retrieve(existing.stripePaymentIntentId);
 
@@ -60,6 +77,7 @@ export class PaymentsService {
           409,
         );
       }
+      assertHoldActive();
       if (intent.status !== "canceled") {
         if (intent.amount !== amount) {
           intent = await stripe.paymentIntents.update(intent.id, { amount });
@@ -73,6 +91,7 @@ export class PaymentsService {
       // Cancelled by Stripe (e.g. expired): fall through and start a fresh one
     }
 
+    assertHoldActive();
     const intent = await stripe.paymentIntents.create({
       amount,
       currency,
@@ -148,13 +167,18 @@ export class PaymentsService {
   /**
    * Records a successful payment and confirms the booking. Shared by the
    * webhook and confirmPayment, and idempotent: running it twice is harmless.
-   * Only a PENDING booking is confirmed, so a booking cancelled meanwhile
-   * isn't silently revived.
+   * Only a PENDING booking is confirmed; a payment for a booking that was
+   * cancelled meanwhile (e.g. its unpaid hold expired) goes through
+   * `handlePaymentForCancelledBooking`, so nobody is left charged with no booking.
    */
-  private async markIntentSucceeded(intentId: string, bookingId: string) {
+  async markIntentSucceeded(intentId: string, bookingId: string) {
     const confirmed = await prisma.$transaction(async (tx) => {
+      // Never overwrite a refund (e.g. a webhook redelivered after we refunded)
       await tx.payment.updateMany({
-        where: { stripePaymentIntentId: intentId, status: { not: "SUCCEEDED" } },
+        where: {
+          stripePaymentIntentId: intentId,
+          status: { notIn: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+        },
         data: { status: "SUCCEEDED", paidAt: new Date() },
       });
       const { count } = await tx.booking.updateMany({
@@ -165,15 +189,7 @@ export class PaymentsService {
     });
 
     if (!confirmed) {
-      const current = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        select: { status: true },
-      });
-      if (current?.status === "CANCELLED") {
-        logger.warn(
-          `Payment ${intentId} succeeded for cancelled booking ${bookingId}; needs a manual refund`,
-        );
-      }
+      await this.handlePaymentForCancelledBooking(intentId, bookingId);
       return;
     }
 
@@ -183,6 +199,76 @@ export class PaymentsService {
     });
     // Deduped per booking, so webhook redeliveries don't notify twice
     if (booking) void notificationsService.notifyBookingConfirmed(booking);
+  }
+
+  /**
+   * Money arrived for a booking that is already CANCELLED.
+   * - Hold expired (system) and every slot is still free and in the future:
+   *   claim the slots back and confirm the booking.
+   * - Otherwise: refund in full, once (same idempotency key as the cancel
+   *   flow), and tell the customer. A refund error is rethrown so Stripe
+   *   retries the webhook rather than leaving the customer charged.
+   */
+  private async handlePaymentForCancelledBooking(intentId: string, bookingId: string) {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { items: { include: { slot: true } }, payment: true },
+    });
+    if (!booking || booking.status !== "CANCELLED") return;
+
+    if (
+      booking.cancellationReason === EXPIRED_HOLD_REASON &&
+      booking.items.length > 0 &&
+      !booking.items.some((item) => hasSlotStarted(item.slot))
+    ) {
+      const slotIds = booking.items.map((item) => item.slotId);
+      const reclaimed = await prisma
+        .$transaction(async (tx) => {
+          const claimed = await tx.timeSlot.updateMany({
+            where: { id: { in: slotIds }, isAvailable: true, isBlocked: false },
+            data: { isAvailable: false },
+          });
+          // All or nothing: a partial claim rolls back
+          if (claimed.count !== slotIds.length) throw new SlotsTaken();
+          const { count } = await tx.booking.updateMany({
+            where: { id: bookingId, status: "CANCELLED", cancellationReason: EXPIRED_HOLD_REASON },
+            data: {
+              status: "CONFIRMED",
+              cancelledAt: null,
+              cancelledById: null,
+              cancellationReason: null,
+            },
+          });
+          if (count !== 1) throw new SlotsTaken();
+          return true;
+        })
+        .catch((error) => {
+          if (error instanceof SlotsTaken) return false;
+          throw error;
+        });
+
+      if (reclaimed) {
+        logger.info(`Late payment ${intentId}: re-claimed slots, booking ${bookingId} confirmed`);
+        void notificationsService.notifyBookingConfirmed(booking);
+        return;
+      }
+    }
+
+    const refund = await stripe.refunds.create(
+      { payment_intent: intentId },
+      { idempotencyKey: `refund-booking-${bookingId}` },
+    );
+    await prisma.payment.updateMany({
+      where: { stripePaymentIntentId: intentId, status: { not: "REFUNDED" } },
+      data: {
+        status: "REFUNDED",
+        refundAmount: booking.payment?.amount ?? null,
+        stripeRefundId: refund.id,
+      },
+    });
+    logger.warn(`Late payment ${intentId} for cancelled booking ${bookingId} refunded (${refund.id})`);
+    await notificationsService.createLatePaymentRefunded(booking);
+    void emailService.sendLatePaymentRefunded(bookingId);
   }
 
   async handleWebhookEvent(event: Stripe.Event) {

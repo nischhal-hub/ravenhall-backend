@@ -9,6 +9,7 @@ import {
   blockSlots,
   unblockSlots,
   getAllUsers,
+  getUserById,
   updateUserRole,
   createDiscountCode,
   getAllDiscountCodes,
@@ -69,6 +70,7 @@ router.use('/reports/revenue', reportsRouter);
 
 // ── Users ─────────────────────────────────────────────────────────────────
 router.get('/users', requireRole('ADMIN'), getAllUsers);
+router.get('/users/:id', requireRole('ADMIN', 'STAFF'), getUserById);
 router.patch('/users/:id/role', requireRole('ADMIN'), updateUserRole);
 
 // ── Discount codes ────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./config/logger";
 import { prisma } from "./config/database";
 import { startSlotGenerationCron } from "./jobs/slotGeneration.job";
-import { startBookingReminderCron } from "./jobs/bookingReminder.job";
+import { startScheduledJobsCron } from "./jobs/scheduledJobs.job";
 
 const PORT = process.env.PORT || 4000;
 
@@ -12,7 +12,7 @@ async function bootstrap() {
     logger.info("Database connected successfully");
 
     startSlotGenerationCron();
-    startBookingReminderCron();
+    startScheduledJobsCron();
 
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);

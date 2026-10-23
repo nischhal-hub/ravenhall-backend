@@ -165,6 +165,30 @@ export class AuthService {
     if (count === 1) void emailService.sendWelcome(user);
   }
 
+  /**
+   * Sends a fresh verification code to an unverified account. The new code
+   * replaces the old one (so the old code stops working). Returns nothing
+   * either way, so the caller can't tell whether the email exists or is
+   * already verified. Codes are stored the same way as at registration and
+   * are never logged.
+   */
+  async resendVerification(email: string) {
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email.trim(), mode: "insensitive" } },
+      select: { id: true, email: true, firstName: true, isEmailVerified: true },
+    });
+    if (!user || user.isEmailVerified) return;
+
+    const emailVerifyToken = crypto.randomInt(100000, 999999).toString();
+    const { count } = await prisma.user.updateMany({
+      where: { id: user.id, isEmailVerified: false },
+      data: { emailVerifyToken },
+    });
+    if (count === 1) {
+      void emailService.sendEmailVerification(user.email, user.firstName, emailVerifyToken);
+    }
+  }
+
   async forgotPassword(email: string) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return; // Do not reveal whether email exists

@@ -1,6 +1,7 @@
 {
   "name": "ravenhall-backend",
   "version": "1.0.0",
+  "packageManager": "pnpm@11.18.0",
   "description": "Ravenhall Indoor Cricket Centre — Booking System API",
   "main": "dist/server.js",
   "scripts": {

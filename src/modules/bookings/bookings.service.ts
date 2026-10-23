@@ -6,9 +6,35 @@ import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { stripe } from '../../config/stripe';
 import { logger } from '../../config/logger';
 import { EmailService } from '../notifications/email.service';
-import { Prisma, Role } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { BookingStatus, Prisma, Role } from '@prisma/client';
 
 const emailService = new EmailService();
+const notificationsService = new NotificationsService();
+
+export type BookingActor = { id: string; role: Role };
+
+const isStaff = (actor: BookingActor) =>
+  actor.role === 'ADMIN' || actor.role === 'STAFF';
+
+// CANCELLED and COMPLETED are terminal
+export const BOOKING_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
+  PENDING: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['COMPLETED', 'CANCELLED'],
+  CANCELLED: [],
+  COMPLETED: [],
+};
+
+const assertTransition = (from: BookingStatus, to: BookingStatus) => {
+  if (BOOKING_TRANSITIONS[from].includes(to)) return;
+  if (from === to) {
+    throw new AppError(`Booking is already ${from.toLowerCase()}`, 409);
+  }
+  throw new AppError(
+    `Cannot change a ${from.toLowerCase()} booking to ${to.toLowerCase()}`,
+    409,
+  );
+};
 
 export class BookingsService {
   async createBooking(
@@ -310,10 +336,9 @@ export class BookingsService {
    * A booking that belongs to someone else returns 404 (not 403) so IDs can't
    * be probed.
    */
-  async getBookingById(id: string, requester: { id: string; role: Role }) {
-    const isStaff = requester.role === 'ADMIN' || requester.role === 'STAFF';
+  async getBookingById(id: string, actor: BookingActor) {
     const booking = await prisma.booking.findFirst({
-      where: { id, ...(isStaff ? {} : { userId: requester.id }) },
+      where: isStaff(actor) ? { id } : { id, userId: actor.id },
       include: {
         items: { include: { slot: { include: { lane: true } } } },
         payment: true,
@@ -419,29 +444,35 @@ export class BookingsService {
       return updatedBooking;
     });
   }
-  async cancelBooking(id: string, userId: string) {
+  /**
+   * Single cancellation path for customers (own bookings) and staff (any booking).
+   * Releases the slot, refunds Stripe payments, records who/why, notifies the user.
+   */
+  async cancelBooking(id: string, actor: BookingActor, reason?: string | null) {
     const booking = await prisma.booking.findFirst({
-      where: { id, userId },
+      where: isStaff(actor) ? { id } : { id, userId: actor.id },
       include: { items: true, payment: true },
     });
 
     if (!booking) throw new AppError('Booking not found', 404);
-    if (booking.status === 'CANCELLED')
-      throw new AppError('Booking already cancelled', 400);
-    if (booking.status === 'COMPLETED')
-      throw new AppError('Cannot cancel a completed booking', 400);
+    assertTransition(booking.status, 'CANCELLED');
+
+    const cancelledBy = isStaff(actor) ? 'staff' : 'customer';
+    const cancellationReason = reason?.trim() || null;
 
     // Refund via Stripe before touching the DB, outside the transaction so a
-    // slow/failed Stripe call can't hit the transaction timeout.
+    // slow/failed Stripe call can't hit the transaction timeout. The idempotency
+    // key makes concurrent or retried cancels reuse the same refund, never a second one.
     let refundId: string | undefined;
     if (
       booking.payment?.stripePaymentIntentId &&
       booking.payment.status === 'SUCCEEDED'
     ) {
       try {
-        const refund = await stripe.refunds.create({
-          payment_intent: booking.payment.stripePaymentIntentId,
-        });
+        const refund = await stripe.refunds.create(
+          { payment_intent: booking.payment.stripePaymentIntentId },
+          { idempotencyKey: `refund-booking-${booking.id}` },
+        );
         refundId = refund.id;
       } catch (error: any) {
         logger.error(
@@ -455,46 +486,104 @@ export class BookingsService {
       }
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      // Restore slot availability
-      const slotIds = booking.items.map((item) => item.slotId);
-      await tx.timeSlot.updateMany({
-        where: { id: { in: slotIds } },
-        data: { isAvailable: true },
-      });
-
-      if (refundId && booking.payment) {
-        await tx.payment.update({
-          where: { id: booking.payment.id },
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        // Conditional update: if a concurrent request already cancelled/completed
+        // the booking, this matches nothing and the request gets a 409.
+        const { count } = await tx.booking.updateMany({
+          where: { id, status: { in: ['PENDING', 'CONFIRMED'] } },
           data: {
-            status: 'REFUNDED',
-            refundAmount: booking.payment.amount,
-            stripeRefundId: refundId,
+            status: 'CANCELLED',
+            cancelledAt: new Date(),
+            cancelledById: actor.id,
+            cancellationReason,
           },
         });
-      }
+        if (count === 0) {
+          throw new AppError('Booking has already been cancelled or completed', 409);
+        }
 
-      return tx.booking.update({
-        where: { id },
-        data: { status: 'CANCELLED' },
-        include: { items: { include: { slot: { include: { lane: true } } } } },
-      });
-    }, { timeout: 15000 });
+        // Restore slot availability
+        const slotIds = booking.items.map((item) => item.slotId);
+        await tx.timeSlot.updateMany({
+          where: { id: { in: slotIds } },
+          data: { isAvailable: true },
+        });
 
-    // Email is best-effort; never fail the cancellation because of it
-    try {
-      await emailService.sendBookingCancellation(
-        booking.userId,
-        booking.bookingRef,
-      );
-    } catch (error) {
-      logger.error(
-        `Failed to send cancellation email for ${booking.bookingRef}`,
-        error,
-      );
-    }
+        if (refundId && booking.payment) {
+          await tx.payment.update({
+            where: { id: booking.payment.id },
+            data: {
+              status: 'REFUNDED',
+              refundAmount: booking.payment.amount,
+              stripeRefundId: refundId,
+            },
+          });
+        }
+
+        await notificationsService.createBookingCancelled(
+          booking,
+          { cancelledBy, reason: cancellationReason },
+          tx,
+        );
+
+        return tx.booking.findUniqueOrThrow({
+          where: { id },
+          include: {
+            items: { include: { slot: { include: { lane: true } } } },
+            payment: true,
+            user: true,
+          },
+        });
+      },
+      { timeout: 15000 },
+    );
+
+    // Fire-and-forget after commit: a mail failure must not fail the cancel
+    void emailService.sendBookingCancellation(id, {
+      cancelledBy,
+      reason: cancellationReason,
+      refunded: Boolean(refundId),
+    });
 
     return updated;
+  }
+
+  /**
+   * Staff status changes. CANCELLED is routed through cancelBooking so every
+   * cancellation releases the slot, refunds and notifies the same way.
+   */
+  async updateStatus(
+    id: string,
+    status: BookingStatus,
+    actor: BookingActor,
+    reason?: string | null,
+  ) {
+    if (!Object.values(BookingStatus).includes(status)) {
+      throw new AppError('Invalid booking status', 400);
+    }
+    if (status === 'CANCELLED') return this.cancelBooking(id, actor, reason);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new AppError('Booking not found', 404);
+    assertTransition(booking.status, status);
+
+    const { count } = await prisma.booking.updateMany({
+      where: { id, status: booking.status },
+      data: { status },
+    });
+    if (count === 0) {
+      throw new AppError('Booking was modified by another request; please refresh', 409);
+    }
+
+    if (status === 'CONFIRMED') {
+      void notificationsService.notifyBookingConfirmed(booking);
+    }
+
+    return prisma.booking.findUniqueOrThrow({
+      where: { id },
+      include: { user: true, items: true },
+    });
   }
   async deleteBooking(id: string) {
     const booking = await prisma.booking.findFirst({

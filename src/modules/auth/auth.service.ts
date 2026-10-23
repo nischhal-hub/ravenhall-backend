@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import {
@@ -8,8 +9,10 @@ import {
   verifyRefreshToken,
 } from "../../utils/jwt";
 import { EmailService } from "../notifications/email.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 const emailService = new EmailService();
+const notificationsService = new NotificationsService();
 
 export class AuthService {
   async register(data: {
@@ -30,22 +33,39 @@ export class AuthService {
     );
     const emailVerifyToken = crypto.randomInt(100000, 999999).toString();
 
-    const user = await prisma.user.create({
-      data: {
-        ...data,
-        password: hashedPassword,
-        emailVerifyToken,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-      },
-    });
+    // User + welcome notification are committed together, so an account
+    // always has exactly one welcome notification (dedupeKey guards retries).
+    const user = await prisma
+      .$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            ...data,
+            password: hashedPassword,
+            emailVerifyToken,
+          },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        });
+        await notificationsService.createWelcome(created, tx);
+        return created;
+      })
+      .catch((error) => {
+        // Concurrent double-submit with the same email loses the unique-index race
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          throw new AppError("Email already registered", 409);
+        }
+        throw error;
+      });
 
-    await emailService.sendEmailVerification(
+    void emailService.sendEmailVerification(
       data.email,
       data.firstName,
       emailVerifyToken,
@@ -136,10 +156,13 @@ export class AuthService {
     });
     if (!user) throw new AppError("Invalid verification token", 400);
 
-    await prisma.user.update({
-      where: { id: user.id },
+    const { count } = await prisma.user.updateMany({
+      where: { id: user.id, isEmailVerified: false },
       data: { isEmailVerified: true, emailVerifyToken: null },
     });
+
+    // Welcome email goes out once the address is proven to be real
+    if (count === 1) void emailService.sendWelcome(user);
   }
 
   async forgotPassword(email: string) {
@@ -226,6 +249,7 @@ export class AuthService {
         },
 
         notifications: {
+          where: { type: "IN_APP" },
           orderBy: { createdAt: "desc" },
           take: 20,
         },

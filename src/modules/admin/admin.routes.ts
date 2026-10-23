@@ -19,6 +19,9 @@ import {
 } from './admin.controller';
 import { authenticate, requireRole } from '../../middleware/auth.middleware';
 import { uploadLaneImage } from '../../middleware/upload.middleware';
+import { validate } from '../../middleware/validate.middleware';
+import { cancelBooking } from '../bookings/bookings.controller';
+import { cancelBookingSchema } from '../bookings/bookings.validation';
 import expenseRouter, { expenseCategoryRouter } from '../expenses/expenses.routes';
 import reportsRouter from '../reports/reports.routes';
 
@@ -33,6 +36,12 @@ router.patch(
   '/bookings/:id/status',
   requireRole('ADMIN', 'STAFF'),
   updateBookingStatus,
+);
+router.patch(
+  '/bookings/:id/cancel',
+  requireRole('ADMIN', 'STAFF'),
+  validate(cancelBookingSchema),
+  cancelBooking,
 );
 
 // ── Lanes ─────────────────────────────────────────────────────────────────

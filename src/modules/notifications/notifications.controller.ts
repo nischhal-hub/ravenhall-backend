@@ -15,3 +15,25 @@ export const getMyNotifications = async (
     sendSuccess(res, notifications);
   } catch (error) { next(error); }
 };
+
+export const markNotificationRead = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    await notificationsService.markAsRead(req.user!.id, req.params.id);
+    sendSuccess(res, null, "Notification marked as read");
+  } catch (error) { next(error); }
+};
+
+export const markAllNotificationsRead = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await notificationsService.markAllAsRead(req.user!.id);
+    sendSuccess(res, result, "All notifications marked as read");
+  } catch (error) { next(error); }
+};

@@ -39,8 +39,11 @@ npm run dev
 | GET | /api/lanes/:id/slots?date= | Get slots for lane | No |
 | POST | /api/bookings | Create booking | Customer |
 | GET | /api/bookings/my | My bookings | Customer |
-| GET | /api/bookings/:id | Get booking | Customer |
-| PATCH | /api/bookings/:id/cancel | Cancel booking | Customer |
+| GET | /api/bookings/:id | Get booking (own only; any for staff) | Customer |
+| PATCH | /api/bookings/:id/cancel | Cancel own booking (body: `{ reason? }`) | Customer |
+| GET | /api/notifications/my | In-app notifications + `unreadCount` | Yes |
+| PATCH | /api/notifications/:id/read | Mark one as read | Yes |
+| PATCH | /api/notifications/read-all | Mark all as read | Yes |
 | POST | /api/payments/intent | Create Stripe intent | Customer |
 | POST | /api/payments/webhook | Stripe webhook | Stripe |
 | GET | /api/memberships | List plans | No |
@@ -48,7 +51,8 @@ npm run dev
 | POST | /api/memberships/subscribe | Subscribe | Customer |
 | POST | /api/discount/validate | Validate code | Customer |
 | GET | /api/admin/bookings | All bookings | Admin/Staff |
-| PATCH | /api/admin/bookings/:id/status | Update status | Admin/Staff |
+| PATCH | /api/admin/bookings/:id/status | Update status (guarded transitions; `CANCELLED` uses the cancel flow) | Admin/Staff |
+| PATCH | /api/admin/bookings/:id/cancel | Cancel any booking + notify customer (body: `{ reason? }`) | Admin/Staff |
 | POST | /api/admin/lanes | Create lane | Admin |
 | PUT | /api/admin/lanes/:id | Update lane | Admin/Staff |
 | DELETE | /api/admin/lanes/:id | Delete lane | Admin |
@@ -60,6 +64,22 @@ npm run dev
 | POST | /api/admin/discounts | Create code | Admin |
 | GET | /api/admin/discounts | List codes | Admin/Staff |
 | PATCH | /api/admin/discounts/:id | Update code | Admin |
+
+## Environment Variables
+
+See `.env.example`. Email-related variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SMTP_HOST` / `SMTP_PORT` | No | SMTP server (defaults `smtp.gmail.com` / `465`; port 465 uses TLS) |
+| `SMTP_USER` / `SMTP_PASS` | Yes (to send) | SMTP credentials (for Gmail use an App Password) |
+| `EMAIL_FROM` / `EMAIL_FROM_NAME` | Yes | Sender address and display name |
+| `EMAIL_ENABLED` | No | Set to `false` to log emails instead of sending (local dev / CI). Default: enabled |
+| `CLIENT_URL` | Recommended | Frontend URL; used for CORS and for links in emails |
+
+Transactional emails (welcome on email verification, booking confirmed, booking cancelled) are sent
+fire-and-forget after the DB commit and deduplicated per event via `Notification.dedupeKey`,
+so a mail failure never breaks a request and webhook retries never send twice.
 
 ## Default Seed Credentials
 

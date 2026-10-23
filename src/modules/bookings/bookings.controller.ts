@@ -88,7 +88,8 @@ export const cancelBooking = async (
   try {
     const booking = await bookingsService.cancelBooking(
       req.params.id,
-      req.user!.id,
+      req.user!,
+      req.body?.reason,
     );
     sendSuccess(res, booking, "Booking cancelled successfully");
   } catch (error) {

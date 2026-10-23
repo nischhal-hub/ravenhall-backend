@@ -2,9 +2,9 @@ import Stripe from "stripe";
 import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { stripe } from "../../config/stripe";
-import { EmailService } from "../notifications/email.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
-const emailService = new EmailService();
+const notificationsService = new NotificationsService();
 
 export class PaymentsService {
   async createPaymentIntent(userId: string, bookingId: string) {
@@ -80,8 +80,9 @@ export class PaymentsService {
           },
         });
 
+        // Deduped per booking, so Stripe webhook redeliveries don't notify twice
         if (booking) {
-          await emailService.sendBookingConfirmation(booking);
+          void notificationsService.notifyBookingConfirmed(booking);
         }
         break;
       }

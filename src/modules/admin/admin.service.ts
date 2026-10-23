@@ -3,6 +3,7 @@ import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
 import { deleteImageFromCloudinary } from "../../utils/cloudinaryUpload";
+import { BookingActor, BookingsService } from "../bookings/bookings.service";
 import {
   BookingStats,
   CustomerSummary,
@@ -15,6 +16,8 @@ import {
   RevenueMonth,
   UserStats,
 } from "./dashboard.types";
+
+const bookingsService = new BookingsService();
 
 export class AdminService {
   async getAllBookings(
@@ -64,14 +67,13 @@ export class AdminService {
     };
   }
 
-  async updateBookingStatus(id: string, status: BookingStatus) {
-    const booking = await prisma.booking.findUnique({ where: { id } });
-    if (!booking) throw new AppError("Booking not found", 404);
-    return prisma.booking.update({
-      where: { id },
-      data: { status },
-      include: { user: true, items: true },
-    });
+  async updateBookingStatus(
+    id: string,
+    status: BookingStatus,
+    actor: BookingActor,
+    reason?: string,
+  ) {
+    return bookingsService.updateStatus(id, status, actor, reason);
   }
 
   async createLane(data: {

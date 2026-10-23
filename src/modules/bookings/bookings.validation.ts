@@ -7,3 +7,11 @@ export const createBookingSchema = z.object({
     discountCode: z.string().optional(),
   }),
 });
+
+export const cancelBookingSchema = z.object({
+  body: z
+    .object({
+      reason: z.string().trim().max(500, "Reason must be 500 characters or fewer").optional(),
+    })
+    .optional(),
+});

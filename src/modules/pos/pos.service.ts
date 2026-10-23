@@ -6,10 +6,9 @@ import { AppError } from '../../utils/AppError';
 import { generateBookingRef } from '../../utils/bookingRef';
 import { EQUIPMENT_FEE } from '../../utils/pricing';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
-import { EmailService } from '../notifications/email.service';
-import { logger } from '../../config/logger';
+import { NotificationsService } from '../notifications/notifications.service';
 
-const emailService = new EmailService();
+const notificationsService = new NotificationsService();
 
 export interface PosCustomerInput {
   
@@ -603,11 +602,9 @@ export class PosService {
     // 4. Fetch full booking details after transaction
     const fullBooking = await this.getPosBookingById(bookingId);
 
-    // 5. Send confirmation email if customer has a valid (non-guest) email
-    if (customer.email && !customer.email.endsWith('@guest.ravenhall.com') && isPaid) {
-      emailService.sendBookingConfirmation(fullBooking).catch((err) => {
-        logger.warn(`Could not send POS booking confirmation email to ${customer.email}:`, err);
-      });
+    // 5. Notify customer (EmailService skips guest placeholder addresses)
+    if (isPaid) {
+      void notificationsService.notifyBookingConfirmed(fullBooking);
     }
 
     return fullBooking;
@@ -861,12 +858,8 @@ export class PosService {
       });
     });
 
-    // Send confirmation email
-    if (booking.user.email && !booking.user.email.endsWith('@guest.ravenhall.com')) {
-      emailService.sendBookingConfirmation(updated).catch((err) => {
-        logger.warn(`Could not send confirmation email:`, err);
-      });
-    }
+    // Notify customer (EmailService skips guest placeholder addresses)
+    void notificationsService.notifyBookingConfirmed(updated);
 
     return updated;
   }

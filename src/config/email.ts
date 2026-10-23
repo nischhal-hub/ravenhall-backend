@@ -13,3 +13,6 @@ export const transporter = nodemailer.createTransport({
 });
 
 export const EMAIL_FROM = `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM}>`;
+
+// Set EMAIL_ENABLED=false to log emails instead of sending them (local dev / CI)
+export const isEmailEnabled = () => process.env.EMAIL_ENABLED !== "false";

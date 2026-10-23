@@ -3,6 +3,7 @@ import { AdminService } from './admin.service';
 import { sendSuccess, sendCreated } from '../../utils/apiResponse';
 import { getPaginationParams } from '../../utils/pagination';
 import { uploadImageToCloudinary } from '../../utils/cloudinaryUpload';
+import { AuthRequest } from '../../middleware/auth.middleware';
 
 const adminService = new AdminService();
 
@@ -28,7 +29,7 @@ export const getAllBookings = async (
 };
 
 export const updateBookingStatus = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction,
 ) => {
@@ -36,6 +37,8 @@ export const updateBookingStatus = async (
     const booking = await adminService.updateBookingStatus(
       req.params.id,
       req.body.status,
+      req.user!,
+      req.body.reason,
     );
     sendSuccess(res, booking);
   } catch (error) {

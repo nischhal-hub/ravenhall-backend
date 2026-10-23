@@ -64,6 +64,7 @@ npm run dev
 | POST | /api/admin/discounts | Create code | Admin |
 | GET | /api/admin/discounts | List codes | Admin/Staff |
 | PATCH | /api/admin/discounts/:id | Update code | Admin |
+| GET/POST | /api/internal/jobs/booking-reminders | Send due booking reminders (for a scheduler) | `CRON_SECRET` |
 
 ## Environment Variables
 
@@ -80,6 +81,39 @@ See `.env.example`. Email-related variables:
 Transactional emails (welcome on email verification, booking confirmed, booking cancelled) are sent
 fire-and-forget after the DB commit and deduplicated per event via `Notification.dedupeKey`,
 so a mail failure never breaks a request and webhook retries never send twice.
+
+### Booking reminders
+
+Customers get an in-app notification and an email `REMINDER_LEAD_MINUTES` (default 60) before a
+**confirmed** booking starts, e.g. at 1:00 PM for a 2:00 PM session.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `REMINDER_LEAD_MINUTES` | No | Lead time in minutes. Default `60` |
+| `BUSINESS_TIMEZONE` | No | IANA zone of the slot times (e.g. `Asia/Kathmandu`, the default). Used to compute start instants and format times |
+| `CRON_SECRET` | To use the endpoint | Secret for `/api/internal/jobs/booking-reminders`; requests without it get 401. Unset disables the endpoint |
+| `REMINDER_CRON_ENABLED` | No | `true` runs the job in-process every 5 minutes (long-running servers). Default off |
+
+**Scheduling.** Call the job every 5 minutes by either
+- the host's scheduler (needed on serverless, where in-process cron doesn't run reliably):
+  `GET /api/internal/jobs/booking-reminders` with `Authorization: Bearer $CRON_SECRET`
+  (Vercel Cron sends this header automatically when `CRON_SECRET` is set), or
+- `REMINDER_CRON_ENABLED=true` on a long-running server (Docker/VM).
+
+Running both, overlapping runs and multiple instances are all safe.
+
+**How it behaves**
+- Slot times are wall-clock times in `BUSINESS_TIMEZONE`; they're converted to UTC and all comparisons happen in UTC.
+- Each run picks up confirmed bookings that haven't started and start within the lead time (+3 min tolerance),
+  so a late run still catches up, but a booking that has already started is never reminded.
+- Status and slot are re-checked right before sending: a booking cancelled or rescheduled in the meantime gets nothing for its old state.
+- Deduplicated by `booking-reminder:<bookingId>:<startTimeISO>` (in-app) and `email:booking-reminder:…` (email log),
+  so a rescheduled booking gets one reminder for its new time only.
+- Skipped when the booking was made or confirmed less than the lead time before it starts (the confirmation was just sent),
+  and for POS walk-in guests. A missing email address still gets the in-app notification.
+- A failed email is recorded as `FAILED` and retried by later runs for up to 15 minutes, never after the session starts.
+
+Manual trigger: `curl -H "x-cron-secret: $CRON_SECRET" -X POST http://localhost:4000/api/internal/jobs/booking-reminders`
 
 ## Default Seed Credentials
 

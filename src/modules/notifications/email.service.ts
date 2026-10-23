@@ -9,6 +9,13 @@ const GUEST_EMAIL_DOMAIN = "@guest.ravenhall.com";
 const isDeliverable = (email?: string | null): email is string =>
   Boolean(email) && !email!.endsWith(GUEST_EMAIL_DOMAIN);
 
+/** POS walk-in placeholder account (no real address, no app login) */
+export const isGuestEmail = (email?: string | null) =>
+  Boolean(email) && email!.endsWith(GUEST_EMAIL_DOMAIN);
+
+/** What happened to one keyed send */
+export type EmailOutcome = "sent" | "failed" | "duplicate" | "skipped";
+
 /**
  * All public methods resolve and never throw, so callers can fire-and-forget
  * (`void emailService.sendX(...)`) without a mail failure breaking the request.
@@ -18,15 +25,19 @@ export class EmailService {
    * When `log` is given, the send is recorded as an EMAIL notification keyed by
    * `log.dedupeKey`; a second call with the same key is skipped, which makes
    * retried events (e.g. Stripe webhook redelivery) send at most one email.
+   *
+   * `log.retryFailedSince` opts in to retrying: a FAILED row created at or after
+   * that time is atomically flipped back to QUEUED and sent again. The flip only
+   * matches a FAILED row, so concurrent retries still send at most once.
    */
   private async send(
     to: string | null | undefined,
     content: EmailContent,
-    log?: { userId: string; dedupeKey: string },
-  ) {
+    log?: { userId: string; dedupeKey: string; retryFailedSince?: Date },
+  ): Promise<EmailOutcome> {
     if (!isDeliverable(to)) {
       logger.warn(`Skipping email "${content.subject}": no deliverable address`);
-      return;
+      return "skipped";
     }
 
     try {
@@ -45,8 +56,21 @@ export class EmailService {
           skipDuplicates: true,
         });
         if (count === 0) {
-          logger.info(`Skipping duplicate email ${log.dedupeKey}`);
-          return;
+          const reclaimed = log.retryFailedSince
+            ? await prisma.notification.updateMany({
+                where: {
+                  dedupeKey: log.dedupeKey,
+                  status: "FAILED",
+                  createdAt: { gte: log.retryFailedSince },
+                },
+                data: { status: "QUEUED" },
+              })
+            : { count: 0 };
+          if (reclaimed.count === 0) {
+            logger.info(`Skipping duplicate email ${log.dedupeKey}`);
+            return "duplicate";
+          }
+          logger.info(`Retrying failed email ${log.dedupeKey}`);
         }
       }
 
@@ -69,6 +93,7 @@ export class EmailService {
           data: { status: "SENT", sentAt: new Date() },
         });
       }
+      return "sent";
     } catch (error) {
       logger.error(`Failed to send email to ${to}:`, error);
       if (log) {
@@ -76,6 +101,7 @@ export class EmailService {
           .updateMany({ where: { dedupeKey: log.dedupeKey }, data: { status: "FAILED" } })
           .catch((err) => logger.error(`Failed to record email failure:`, err));
       }
+      return "failed";
     }
   }
 
@@ -124,6 +150,27 @@ export class EmailService {
       );
     } catch (error) {
       logger.error(`Failed to prepare confirmation email for booking ${booking.id}:`, error);
+    }
+  }
+
+  /**
+   * Booking reminder, keyed per booking *and* start time so a rescheduled booking
+   * gets its own reminder. A FAILED send may be retried by later job runs while
+   * `retryFailedSince` allows it (the reminders service bounds that window).
+   */
+  async sendBookingReminder(
+    user: { id: string; email: string; firstName: string },
+    reminder: Parameters<typeof emailTemplates.bookingReminder>[1],
+    log: { dedupeKey: string; retryFailedSince: Date },
+  ): Promise<EmailOutcome> {
+    try {
+      return await this.send(user.email, emailTemplates.bookingReminder(user.firstName, reminder), {
+        userId: user.id,
+        ...log,
+      });
+    } catch (error) {
+      logger.error(`Failed to prepare reminder email ${log.dedupeKey}:`, error);
+      return "failed";
     }
   }
 

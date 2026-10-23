@@ -173,6 +173,65 @@ export const emailTemplates = {
     };
   },
 
+  /**
+   * Sent shortly before a session. `reminder` holds strings already formatted in
+   * the business timezone, so this template does no time math of its own.
+   */
+  bookingReminder(
+    firstName: string,
+    reminder: {
+      bookingId: string;
+      bookingRef: string;
+      laneName?: string;
+      date: string; // "Fri, 23 Oct 2026"
+      startTime: string; // "2:00 PM"
+      duration: string; // "1 hour"
+      relativeDay: string; // "today"
+    },
+  ): EmailContent {
+    const url = clientUrl(`/panel/bookings/${encodeURIComponent(reminder.bookingId)}`);
+    const where = reminder.laneName ?? 'your lane';
+    const intro = `Your session at ${where} starts at ${reminder.startTime} ${reminder.relativeDay}.`;
+    const cancelLine =
+      'Can’t make it? You can cancel from My bookings before your session starts. Online payments are refunded automatically.';
+    const rows: [string, string][] = [
+      ['Booking reference', reminder.bookingRef],
+      ...(reminder.laneName ? ([['Lane', reminder.laneName]] as [string, string][]) : []),
+      ['Date', reminder.date],
+      ['Start time', reminder.startTime],
+      ['Duration', reminder.duration],
+    ];
+    return {
+      subject: `Reminder: your session starts at ${reminder.startTime} — ${reminder.bookingRef}`,
+      html: layout(
+        `Hi ${firstName},`,
+        `<p>${escapeHtml(intro)}</p>
+         <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:8px 0;">
+           ${rows
+             .map(
+               ([label, value]) =>
+                 `<tr><td style="padding:8px 0;border-bottom:1px solid #e4e4e7;color:#71717a;">${label}</td><td style="padding:8px 0;border-bottom:1px solid #e4e4e7;text-align:right;font-weight:bold;">${escapeHtml(value)}</td></tr>`,
+             )
+             .join('')}
+         </table>
+         <p>Please arrive 10 minutes before your session starts.</p>
+         <p>${escapeHtml(cancelLine)}</p>`,
+        { label: 'View booking', url },
+      ),
+      text: textLayout([
+        `Hi ${firstName},`,
+        '',
+        intro,
+        '',
+        ...rows.map(([label, value]) => `${label}: ${value}`),
+        '',
+        'Please arrive 10 minutes before your session starts.',
+        cancelLine,
+        url && `View booking: ${url}`,
+      ]),
+    };
+  },
+
   bookingCancelled(
     firstName: string,
     booking: BookingEmailDetails,

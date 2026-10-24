@@ -11,6 +11,7 @@ import {
   getAllUsers,
   getUserById,
   updateUserRole,
+  updateUserStatus,
   createDiscountCode,
   getAllDiscountCodes,
   updateDiscountCode,
@@ -72,6 +73,8 @@ router.use('/reports/revenue', reportsRouter);
 router.get('/users', requireRole('ADMIN'), getAllUsers);
 router.get('/users/:id', requireRole('ADMIN', 'STAFF'), getUserById);
 router.patch('/users/:id/role', requireRole('ADMIN'), updateUserRole);
+// body: { status: 'ACTIVE' | 'INACTIVE', reason? }
+router.patch('/users/:id/status', requireRole('ADMIN'), updateUserStatus);
 
 // ── Discount codes ────────────────────────────────────────────────────────
 router.post('/discounts', requireRole('ADMIN'), createDiscountCode);

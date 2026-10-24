@@ -97,6 +97,23 @@ export const cancelBooking = async (
   }
 };
 
+export const applyDiscountCode = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const booking = await bookingsService.applyDiscountCode(
+      req.params.id,
+      req.user!,
+      req.body.code,
+    );
+    sendSuccess(res, booking, "Discount code applied");
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateBooking = async (
   req: AuthRequest,
   res: Response,

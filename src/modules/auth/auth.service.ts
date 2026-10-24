@@ -79,6 +79,13 @@ export class AuthService {
 
     const isPasswordValid = await bcrypt.compare(data.password, user.password);
     if (!isPasswordValid) throw new AppError("Invalid email or password", 401);
+    // Checked after the password, so it doesn't reveal which emails exist
+    if (user.status === "INACTIVE") {
+      throw new AppError(
+        "This account has been deactivated. Please contact us if you think this is a mistake.",
+        403,
+      );
+    }
 
     const tokenPayload = {
       userId: user.id,

@@ -144,6 +144,42 @@ export const emailTemplates = {
     };
   },
 
+  /**
+   * Online booking created but not yet paid. The slot is only held until
+   * `payBy` (already formatted in the business timezone); payment confirms it.
+   */
+  bookingReceived(
+    firstName: string,
+    booking: BookingEmailDetails,
+    opts: { bookingId: string; payBy?: string },
+  ): EmailContent {
+    const url = clientUrl(`/panel/bookings/${encodeURIComponent(opts.bookingId)}/pay`);
+    const holdLine = opts.payBy
+      ? `We're holding this slot for you until ${opts.payBy}. Please complete payment before then to confirm your booking, otherwise the slot will be released.`
+      : 'Please complete payment to confirm your booking.';
+    return {
+      subject: `Booking Received — Payment Required — ${booking.bookingRef}`,
+      html: layout(
+        `Hi ${firstName},`,
+        `<p>We've received your booking request. It is <strong>not confirmed yet</strong>.</p>
+         ${bookingTableHtml(booking)}
+         <p>${escapeHtml(holdLine)}</p>
+         <p>You'll get a confirmation email as soon as your payment goes through.</p>`,
+        { label: 'Complete payment', url },
+      ),
+      text: textLayout([
+        `Hi ${firstName},`,
+        '',
+        "We've received your booking request. It is not confirmed yet.",
+        ...bookingTableText(booking),
+        '',
+        holdLine,
+        "You'll get a confirmation email as soon as your payment goes through.",
+        url && `Complete payment: ${url}`,
+      ]),
+    };
+  },
+
   bookingConfirmed(firstName: string, booking: BookingEmailDetails): EmailContent {
     const url = clientUrl('/panel/bookings');
     return {

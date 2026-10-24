@@ -62,6 +62,11 @@ jest.mock('../config/database', () => {
       }),
     },
     payment: {
+      // Booking payment by intent id, with its booking (as the service selects it)
+      findUnique: jest.fn(async ({ where }: Row) => {
+        const b = store.bookings.find((x) => x.payment?.stripePaymentIntentId === where.stripePaymentIntentId);
+        return b ? { currency: 'aud', ...b.payment, booking: { id: b.id, finalAmount: b.finalAmount } } : null;
+      }),
       updateMany: jest.fn(async ({ where, data }: Row) => {
         const rows = store.bookings.map((b) => b.payment).filter((p) => p && matches(p, where));
         rows.forEach((p) => Object.assign(p, data));
@@ -130,6 +135,15 @@ const payments = new PaymentsService();
 // 11:45 local (Asia/Kathmandu) on 23 Oct 2026; the booked session is tomorrow
 const NOW = new Date('2026-10-23T06:00:00.000Z');
 const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000);
+// What Stripe returns for a completed $44 payment
+const paidIntent = (id: string, overrides: Row = {}) => ({
+  id,
+  status: 'succeeded',
+  amount_received: 4400,
+  currency: 'aud',
+  metadata: {},
+  ...overrides,
+});
 
 function addBooking(overrides: Row = {}) {
   const id = overrides.id ?? `booking-${nextId++}`;
@@ -235,7 +249,7 @@ describe('Unpaid-hold expiry', () => {
 
   it('confirms instead of expiring when Stripe already has the money', async () => {
     const booking = addBooking();
-    intents.retrieve.mockResolvedValue({ id: booking.payment.stripePaymentIntentId, status: 'succeeded' });
+    intents.retrieve.mockResolvedValue(paidIntent(booking.payment.stripePaymentIntentId));
 
     const result = await expiry.runUnpaidExpiry(new Date());
 
@@ -249,7 +263,7 @@ describe('Unpaid-hold expiry', () => {
     const booking = addBooking();
     intents.retrieve
       .mockResolvedValueOnce({ id: 'x', status: 'requires_payment_method' })
-      .mockResolvedValueOnce({ id: booking.payment.stripePaymentIntentId, status: 'succeeded' });
+      .mockResolvedValueOnce(paidIntent(booking.payment.stripePaymentIntentId));
     intents.cancel.mockRejectedValue(new Error('This PaymentIntent has already succeeded'));
 
     expect((await expiry.runUnpaidExpiry(new Date())).paid).toBe(1);
@@ -293,7 +307,7 @@ describe('Payment arriving after expiry', () => {
   const webhook = (booking: Row) =>
     payments.handleWebhookEvent({
       type: 'payment_intent.succeeded',
-      data: { object: { id: booking.payment.stripePaymentIntentId, metadata: { bookingId: booking.id } } },
+      data: { object: paidIntent(booking.payment.stripePaymentIntentId, { metadata: { bookingId: booking.id } }) },
     } as any);
 
   it('re-claims the slot and confirms the booking when the slot is still free', async () => {

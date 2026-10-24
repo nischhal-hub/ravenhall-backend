@@ -90,7 +90,7 @@ export class BookingExpiryService {
       const intent = await stripe.paymentIntents.retrieve(intentId);
       if (intent.status === "succeeded") {
         // Paid but the webhook hasn't landed: confirm instead of expiring
-        await paymentsService.markIntentSucceeded(intent.id, booking.id);
+        await paymentsService.markIntentSucceeded(intent);
         return "paid";
       }
       if (intent.status === "processing" || intent.status === "requires_capture") {
@@ -106,7 +106,7 @@ export class BookingExpiryService {
           // Most likely the customer paid this very moment: re-check
           const latest = await stripe.paymentIntents.retrieve(intent.id);
           if (latest.status === "succeeded") {
-            await paymentsService.markIntentSucceeded(latest.id, booking.id);
+            await paymentsService.markIntentSucceeded(latest);
             return "paid";
           }
           if (latest.status !== "canceled") throw error;

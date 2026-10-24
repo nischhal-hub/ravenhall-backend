@@ -11,7 +11,7 @@ jest.mock('../config/database', () => {
       findUniqueOrThrow: jest.fn(),
       updateMany: jest.fn(),
     },
-    payment: { create: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+    payment: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     timeSlot: { updateMany: jest.fn() },
     notification: { createMany: jest.fn(), updateMany: jest.fn() },
   };
@@ -68,6 +68,16 @@ const pendingBooking = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// What Stripe returns for a completed $44 payment
+const paidIntent = (overrides: Record<string, unknown> = {}) => ({
+  id: 'pi_old',
+  status: 'succeeded',
+  amount_received: 4400,
+  currency: 'aud',
+  metadata: { bookingId: 'booking-1' },
+  ...overrides,
+});
+
 const openPayment = (overrides: Record<string, unknown> = {}) => ({
   id: 'payment-1',
   stripePaymentIntentId: 'pi_old',
@@ -88,6 +98,8 @@ beforeEach(() => {
   );
   db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
   db.payment.updateMany.mockResolvedValue({ count: 1 });
+  // The booking a Stripe payment belongs to comes from our Payment row
+  db.payment.findUnique.mockResolvedValue({ ...openPayment(), currency: 'aud', booking: { id: 'booking-1', finalAmount: 44 } });
   db.booking.updateMany.mockResolvedValue({ count: 1 });
   db.booking.findUnique.mockResolvedValue({ id: 'booking-1', userId: alice.id, bookingRef: 'RIC-2026-00001' });
   db.notification.createMany.mockResolvedValue({ count: 1 });
@@ -153,7 +165,7 @@ describe('Starting or resuming a payment', () => {
 
   it('confirms instead of charging again when Stripe already has the payment', async () => {
     db.booking.findFirst.mockResolvedValue(pendingBooking({ payment: openPayment() }));
-    intents.retrieve.mockResolvedValue({ id: 'pi_old', client_secret: 'secret_old', amount: 4400, status: 'succeeded' });
+    intents.retrieve.mockResolvedValue(paidIntent({ client_secret: 'secret_old', amount: 4400 }));
 
     await expect(service.createPaymentIntent(alice.id, 'booking-1')).rejects.toMatchObject({ statusCode: 409 });
     expect(db.booking.updateMany).toHaveBeenCalledWith({
@@ -190,7 +202,7 @@ describe('Starting or resuming a payment', () => {
 describe('Confirming on return from Stripe', () => {
   it('confirms the booking straight from Stripe when the webhook has not arrived', async () => {
     db.booking.findFirst.mockResolvedValue(pendingBooking({ payment: openPayment() }));
-    intents.retrieve.mockResolvedValue({ id: 'pi_old', status: 'succeeded' });
+    intents.retrieve.mockResolvedValue(paidIntent());
 
     const result = await service.confirmPayment(alice.id, 'booking-1');
 
@@ -238,7 +250,7 @@ describe('Confirming on return from Stripe', () => {
 
     await service.handleWebhookEvent({
       type: 'payment_intent.succeeded',
-      data: { object: { id: 'pi_old', metadata: { bookingId: 'booking-1' } } },
+      data: { object: paidIntent() },
     } as any);
 
     expect(db.timeSlot.updateMany).not.toHaveBeenCalled(); // no re-claim
@@ -250,6 +262,48 @@ describe('Confirming on return from Stripe', () => {
       data: [expect.objectContaining({ dedupeKey: 'booking-late-refund:booking-1' })],
       skipDuplicates: true,
     });
+  });
+});
+
+describe('Only a verified payment confirms a booking', () => {
+  const succeededWebhook = (intent: Record<string, unknown>) =>
+    service.handleWebhookEvent({ type: 'payment_intent.succeeded', data: { object: intent } } as any);
+
+  it('a membership payment never touches bookings (it used to confirm every PENDING one)', async () => {
+    await succeededWebhook(paidIntent({ id: 'pi_membership', metadata: { userId: alice.id, plan: 'MONTHLY', type: 'membership' } }));
+
+    expect(db.booking.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores a succeeded payment that is not linked to a booking, whatever its metadata says', async () => {
+    db.payment.findUnique.mockResolvedValue(null);
+
+    await succeededWebhook(paidIntent({ id: 'pi_unknown', metadata: { bookingId: 'booking-1' } }));
+
+    expect(db.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('confirms the booking from our payment record, scoped to that one booking', async () => {
+    await succeededWebhook(paidIntent({ metadata: {} }));
+
+    expect(db.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: 'booking-1', status: 'PENDING' },
+      data: { status: 'CONFIRMED' },
+    });
+  });
+
+  it('does not confirm when Stripe received less than the booking total', async () => {
+    await succeededWebhook(paidIntent({ amount_received: 2000 }));
+
+    expect(db.booking.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not confirm an intent that has not succeeded', async () => {
+    await service.markIntentSucceeded(paidIntent({ status: 'requires_payment_method' }) as any);
+
+    expect(db.booking.updateMany).not.toHaveBeenCalled();
   });
 });
 

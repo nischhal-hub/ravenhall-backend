@@ -7,9 +7,12 @@ import { stripe } from '../../config/stripe';
 import { logger } from '../../config/logger';
 import { EmailService } from '../notifications/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { BookingStatus, Prisma, Role } from '@prisma/client';
+import { BookingStatus, DiscountCode, Prisma, Role } from '@prisma/client';
 import { hasSlotStarted } from '../../utils/businessTime';
 import { holdExpiresAt } from './booking-hold';
+import { checkDiscountCode, claimDiscountUse } from '../discounts/discounts.service';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** User fields safe to return alongside a booking */
 export const SAFE_USER_SELECT = {
@@ -79,32 +82,24 @@ export class BookingsService {
       where: { userId, isActive: true, endDate: { gt: new Date() } },
     });
 
-    let discountPct = 0;
-    let discountCodeRecord = null;
-
-    if (data.discountCode) {
-      discountCodeRecord = await prisma.discountCode.findUnique({
-        where: { code: data.discountCode },
-      });
-      if (
-        discountCodeRecord &&
-        discountCodeRecord.isActive &&
-        discountCodeRecord.validFrom <= new Date() &&
-        discountCodeRecord.validTo >= new Date() &&
-        (!discountCodeRecord.maxUses ||
-          discountCodeRecord.usedCount < discountCodeRecord.maxUses)
-      ) {
-        discountPct = Math.max(discountPct, discountCodeRecord.discountPct);
-      }
-    }
-
-    if (membership) {
-      discountPct = Math.max(discountPct, membership.discountPct);
-    }
-
     const unitPrice = startSlot.lane.hourlyRate;
     const laneHire = unitPrice * slots.length;
     const totalAmount = laneHire + EQUIPMENT_FEE;
+
+    const membershipPct = membership?.discountPct ?? 0;
+    let discountPct = membershipPct;
+    let discountCodeRecord: DiscountCode | null = null;
+
+    if (data.discountCode?.trim()) {
+      const check = await checkDiscountCode(data.discountCode, totalAmount);
+      // A code the customer typed must not silently price at full rate
+      if (!check.valid) throw new AppError(check.message, 422);
+      // Only attach (and use up) the code when it beats the membership discount
+      if (check.record.discountPct > membershipPct) {
+        discountCodeRecord = check.record;
+        discountPct = check.record.discountPct;
+      }
+    }
     const discountAmount = (laneHire * discountPct) / 100;
     const finalAmount = totalAmount - discountAmount;
     const itemSubtotal = unitPrice - (unitPrice * discountPct) / 100;
@@ -149,16 +144,17 @@ export class BookingsService {
         });
 
         if (discountCodeRecord) {
-          await tx.discountCode.update({
-            where: { id: discountCodeRecord.id },
-            data: { usedCount: { increment: 1 } },
-          });
+          await claimDiscountUse(tx, discountCodeRecord);
         }
 
         return booking.id;
       },
       { timeout: 15000 },
     );
+
+    // Request received, payment still due. The "confirmed" email only goes out
+    // once payment is verified (PaymentsService.markIntentSucceeded).
+    void emailService.sendBookingReceived({ id: bookingId });
 
     // Fetch full booking with relations after transaction closes
     return prisma.booking.findUnique({
@@ -468,6 +464,110 @@ export class BookingsService {
     });
   }
   /**
+   * Adds a promo code to an existing booking that hasn't been paid yet.
+   * Same rules as at checkout (active, dates, usage limit, minimum spend).
+   * One code per booking, and it replaces the membership discount only when
+   * it is worth more. An open Stripe checkout is updated in the same
+   * transaction, so the customer is charged the new price.
+   */
+  async applyDiscountCode(id: string, actor: BookingActor, code: string) {
+    if (!code?.trim()) throw new AppError('Enter a discount code', 422);
+
+    const booking = await prisma.booking.findFirst({
+      where: isStaff(actor) ? { id } : { id, userId: actor.id },
+      include: { items: true, payment: true },
+    });
+    if (!booking) throw new AppError('Booking not found', 404);
+
+    if (booking.status !== 'PENDING' || booking.payment?.status === 'SUCCEEDED') {
+      throw new AppError('A discount code can only be added before the booking is paid', 409);
+    }
+    if (booking.source !== 'ONLINE') {
+      throw new AppError('Discounts for counter bookings are applied at the POS', 409);
+    }
+    if (booking.discountCodeId) {
+      throw new AppError('A discount code has already been applied to this booking', 409);
+    }
+    const expiresAt = holdExpiresAt(booking);
+    if (expiresAt && expiresAt <= new Date()) {
+      throw new AppError('The hold on this booking has expired. Please book again.', 409);
+    }
+
+    const check = await checkDiscountCode(code, booking.totalAmount);
+    if (!check.valid) throw new AppError(check.message, 422);
+    const record = check.record;
+
+    // Only lane hire is discountable; the equipment fee never is
+    const laneHire = booking.items.reduce((sum, item) => sum + item.unitPrice, 0);
+    const discountAmount = round2((laneHire * record.discountPct) / 100);
+    if (discountAmount <= booking.discountAmount) {
+      throw new AppError('Your current discount is already better than this code', 422);
+    }
+    const finalAmount = round2(booking.totalAmount - discountAmount);
+
+    await prisma.$transaction(
+      async (tx) => {
+        // Conditional: loses cleanly to a concurrent apply, payment or cancel
+        const { count } = await tx.booking.updateMany({
+          where: { id, status: 'PENDING', discountCodeId: null },
+          data: { discountCodeId: record.id, discountAmount, finalAmount },
+        });
+        if (count === 0) {
+          throw new AppError('This booking was just updated. Please refresh and try again.', 409);
+        }
+
+        for (const item of booking.items) {
+          await tx.bookingItem.update({
+            where: { id: item.id },
+            data: { subtotal: round2(item.unitPrice - (item.unitPrice * record.discountPct) / 100) },
+          });
+        }
+
+        await claimDiscountUse(tx, record);
+
+        if (booking.payment?.stripePaymentIntentId) {
+          // Last step: if Stripe refuses, everything above rolls back
+          await this.syncOpenCheckoutAmount(booking.payment.stripePaymentIntentId, finalAmount);
+          await tx.payment.update({
+            where: { id: booking.payment.id },
+            data: { amount: finalAmount },
+          });
+        }
+      },
+      { timeout: 15000 },
+    );
+
+    return this.getBookingById(id, actor);
+  }
+
+  /** Re-prices an unpaid Stripe PaymentIntent; refuses once money is moving */
+  private async syncOpenCheckoutAmount(intentId: string, amount: number) {
+    let intent;
+    try {
+      intent = await stripe.paymentIntents.retrieve(intentId);
+    } catch (error: any) {
+      logger.error(`Could not load payment ${intentId}: ${error?.message}`, error);
+      throw new AppError("We couldn't update your payment. Please try again.", 502);
+    }
+
+    if (intent.status === 'succeeded' || intent.status === 'processing') {
+      throw new AppError(
+        'A payment for this booking is already in progress, so the code can no longer be added.',
+        409,
+      );
+    }
+    // A cancelled intent is replaced (at the new price) on the next checkout
+    if (intent.status === 'canceled') return;
+
+    try {
+      await stripe.paymentIntents.update(intentId, { amount: Math.round(amount * 100) });
+    } catch (error: any) {
+      logger.error(`Could not re-price payment ${intentId}: ${error?.message}`, error);
+      throw new AppError("We couldn't update your payment. Please try again.", 502);
+    }
+  }
+
+  /**
    * Core of every cancellation (customer, staff, and the unpaid-hold expiry):
    * flips the booking to CANCELLED only if it still matches `where`, then
    * releases its slots. Returns false when nothing matched, e.g. a concurrent
@@ -626,9 +726,23 @@ export class BookingsService {
     }
     if (status === 'CANCELLED') return this.cancelBooking(id, actor, reason);
 
-    const booking = await prisma.booking.findUnique({ where: { id } });
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: { payment: { select: { status: true } } },
+    });
     if (!booking) throw new AppError('Booking not found', 404);
     assertTransition(booking.status, status);
+
+    // CONFIRMED means paid. Staff can only confirm by hand when a verified
+    // payment is already recorded (e.g. the Stripe webhook was missed).
+    if (status === 'CONFIRMED' && booking.payment?.status !== 'SUCCEEDED') {
+      throw new AppError(
+        booking.source === 'POS'
+          ? 'This booking has not been paid. Record the payment at the POS to confirm it.'
+          : 'This booking has not been paid. It is confirmed automatically once the online payment goes through.',
+        409,
+      );
+    }
 
     const { count } = await prisma.booking.updateMany({
       where: { id, status: booking.status },

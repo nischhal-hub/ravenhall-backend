@@ -1,4 +1,4 @@
-import { BookingStatus, Prisma, Role } from "@prisma/client";
+import { AccountStatus, BookingStatus, Prisma, Role } from "@prisma/client";
 import { prisma } from "../../config/database";
 import { AppError } from "../../utils/AppError";
 import { buildPaginationMeta, PaginationParams } from "../../utils/pagination";
@@ -6,6 +6,7 @@ import { deleteImageFromCloudinary } from "../../utils/cloudinaryUpload";
 import {
   businessTimeZone,
   endOfBusinessDay,
+  hasSlotStarted,
   periodKey,
   startOfBusinessDay,
   startOfBusinessMonth,
@@ -292,6 +293,8 @@ export class AdminService {
           lastName: true,
           phone: true,
           role: true,
+          status: true,
+          deactivatedAt: true,
           isEmailVerified: true,
           createdAt: true,
           membership: true,
@@ -324,6 +327,8 @@ export class AdminService {
         lastName: true,
         phone: true,
         role: true,
+        status: true,
+        deactivatedAt: true,
         isEmailVerified: true,
         createdAt: true,
         membership: {
@@ -393,11 +398,89 @@ export class AdminService {
     });
   }
 
+  /**
+   * Deactivate or reactivate an account. Deactivating blocks login and every
+   * existing token, revokes refresh tokens, then cancels the user's upcoming
+   * bookings through the normal cancel path (slot release, refund, emails).
+   * Reactivating only restores access; cancelled bookings stay cancelled.
+   */
+  async updateUserStatus(
+    id: string,
+    status: AccountStatus,
+    actor: BookingActor,
+    reason?: string | null,
+  ) {
+    if (!Object.values(AccountStatus).includes(status)) {
+      throw new AppError("Invalid account status", 400);
+    }
+    if (id === actor.id && status === "INACTIVE") {
+      throw new AppError("You can't deactivate your own account", 400);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) throw new AppError("User not found", 404);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (status === "INACTIVE") {
+        await tx.refreshToken.deleteMany({ where: { userId: id } });
+      }
+      return tx.user.update({
+        where: { id },
+        data: { status, deactivatedAt: status === "INACTIVE" ? new Date() : null },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          status: true,
+          deactivatedAt: true,
+        },
+      });
+    });
+
+    const cancelledBookings: string[] = [];
+    const failedBookings: { bookingRef: string; message: string }[] = [];
+
+    if (status === "INACTIVE") {
+      const open = await prisma.booking.findMany({
+        where: { userId: id, status: { in: ["PENDING", "CONFIRMED"] } },
+        select: {
+          id: true,
+          bookingRef: true,
+          items: { select: { slot: { select: { date: true, startTime: true } } } },
+        },
+      });
+      // Only sessions that haven't started; past ones are left for history
+      const upcoming = open.filter(
+        (b) => b.items.length > 0 && b.items.every((item) => !hasSlotStarted(item.slot)),
+      );
+
+      const cancelReason = reason?.trim() || "Account deactivated";
+      // One at a time: each cancel may call Stripe for a refund
+      for (const booking of upcoming) {
+        try {
+          await bookingsService.cancelBooking(booking.id, actor, cancelReason);
+          cancelledBookings.push(booking.bookingRef);
+        } catch (error) {
+          // e.g. a refund failed: keep going and report it so staff can follow up
+          failedBookings.push({
+            bookingRef: booking.bookingRef,
+            message: error instanceof Error ? error.message : "Cancellation failed",
+          });
+        }
+      }
+    }
+
+    return { user: updated, cancelledBookings, failedBookings };
+  }
+
   async createDiscountCode(data: {
     code: string;
     description?: string;
     discountPct: number;
     maxUses?: number;
+    minBookingAmount?: number | null;
     validFrom: string;
     validTo: string;
   }) {
@@ -422,6 +505,7 @@ export class AdminService {
       discountPct: number;
       isActive: boolean;
       maxUses: number;
+      minBookingAmount: number | null;
     }>,
   ) {
     return prisma.discountCode.update({ where: { id }, data });

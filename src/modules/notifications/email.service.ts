@@ -2,6 +2,8 @@ import { transporter, EMAIL_FROM, isEmailEnabled } from "../../config/email";
 import { logger } from "../../config/logger";
 import { prisma } from "../../config/database";
 import { emailTemplates, EmailContent, BookingEmailDetails } from "./email.templates";
+import { holdExpiresAt } from "../bookings/booking-hold";
+import { formatBusinessTime } from "../../utils/businessTime";
 
 // POS walk-in customers get placeholder addresses that must never be emailed
 const GUEST_EMAIL_DOMAIN = "@guest.ravenhall.com";
@@ -110,18 +112,23 @@ export class EmailService {
       where: { id: bookingId },
       include: {
         user: { select: { id: true, email: true, firstName: true } },
-        items: { include: { slot: { include: { lane: { select: { name: true } } } } } },
+        items: {
+          include: { slot: { include: { lane: { select: { name: true } } } } },
+          orderBy: { slot: { startTime: "asc" } },
+        },
       },
     });
     if (!booking) return null;
 
-    const slot = booking.items[0]?.slot;
+    // Multi-hour bookings: start of the first slot to the end of the last
+    const first = booking.items[0]?.slot;
+    const last = booking.items[booking.items.length - 1]?.slot;
     const details: BookingEmailDetails = {
       bookingRef: booking.bookingRef,
-      laneName: slot?.lane.name,
-      date: slot?.date,
-      startTime: slot?.startTime,
-      endTime: slot?.endTime,
+      laneName: first?.lane.name,
+      date: first?.date,
+      startTime: first?.startTime,
+      endTime: last?.endTime,
       finalAmount: booking.finalAmount,
     };
     return { booking, details };
@@ -136,6 +143,26 @@ export class EmailService {
       userId: user.id,
       dedupeKey: `email:welcome:${user.id}`,
     });
+  }
+
+  /** Online booking created, awaiting payment. Never says "confirmed". */
+  async sendBookingReceived(booking: { id: string }) {
+    try {
+      const loaded = await this.loadBookingForEmail(booking.id);
+      if (!loaded) return;
+
+      const expiresAt = holdExpiresAt(loaded.booking);
+      await this.send(
+        loaded.booking.user.email,
+        emailTemplates.bookingReceived(loaded.booking.user.firstName, loaded.details, {
+          bookingId: booking.id,
+          payBy: expiresAt ? formatBusinessTime(expiresAt) : undefined,
+        }),
+        { userId: loaded.booking.user.id, dedupeKey: `email:booking-received:${booking.id}` },
+      );
+    } catch (error) {
+      logger.error(`Failed to prepare booking-received email for booking ${booking.id}:`, error);
+    }
   }
 
   async sendBookingConfirmation(booking: { id: string }) {

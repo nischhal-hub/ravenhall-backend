@@ -8,6 +8,12 @@ export const createBookingSchema = z.object({
   }),
 });
 
+export const applyDiscountSchema = z.object({
+  body: z.object({
+    code: z.string().trim().min(1, "Enter a discount code").max(50),
+  }),
+});
+
 export const cancelBookingSchema = z.object({
   body: z
     .object({

@@ -127,6 +127,16 @@ export class MembershipsService {
 
     // Retrieve plan from Stripe PaymentIntent metadata (most reliable)
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    // Only a membership payment made by this user, and actually completed
+    if (
+      paymentIntent.metadata.type !== 'membership' ||
+      paymentIntent.metadata.userId !== userId
+    ) {
+      throw new AppError('Payment not found', 404);
+    }
+    if (paymentIntent.status !== 'succeeded') {
+      throw new AppError('Payment has not been completed', 402);
+    }
     const plan = paymentIntent.metadata.plan as MembershipPlan;
 
     if (!plan) {

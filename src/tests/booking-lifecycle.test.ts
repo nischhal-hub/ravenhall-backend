@@ -9,8 +9,10 @@ jest.mock('../config/database', () => {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
       updateMany: jest.fn(),
     },
+    refreshToken: { deleteMany: jest.fn() },
     booking: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -372,9 +374,27 @@ describe('Admin cancel', () => {
 
 // ── Task 4: email triggers ─────────────────────────────────────────────────
 describe('Transactional emails', () => {
-  it('sends a confirmation email with booking details when staff confirm a booking', async () => {
+  it('refuses to confirm a booking whose payment has not gone through', async () => {
+    db.booking.findUnique.mockResolvedValue(
+      makeBooking({ status: 'PENDING', source: 'ONLINE', payment: { status: 'PENDING' } }),
+    );
+
+    const res = await request(app)
+      .patch('/api/admin/bookings/booking-1/status')
+      .set('Authorization', tokenFor(users.admin))
+      .send({ status: 'CONFIRMED' });
+    await flush();
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toContain('has not been paid');
+    expect(db.booking.updateMany).not.toHaveBeenCalled();
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  it('sends a confirmation email with booking details when staff confirm a paid booking', async () => {
     db.booking.findUnique
-      .mockResolvedValueOnce(makeBooking({ status: 'PENDING' })) // status check
+      // Paid, but the webhook was missed: staff may confirm by hand
+      .mockResolvedValueOnce(makeBooking({ status: 'PENDING', payment: { status: 'SUCCEEDED' } }))
       .mockResolvedValue(bookingForEmail('CONFIRMED')); // email details
     db.booking.updateMany.mockResolvedValue({ count: 1 });
     db.booking.findUniqueOrThrow.mockResolvedValue(makeBooking());
@@ -414,6 +434,41 @@ describe('Transactional emails', () => {
     expect(sendMail).not.toHaveBeenCalled();
   });
 
+  it('sends a "payment required" email, not a confirmation, for a new unpaid booking', async () => {
+    db.booking.findUnique.mockResolvedValue({
+      ...bookingForEmail('PENDING'),
+      source: 'ONLINE',
+      createdAt: new Date('2026-11-19T10:00:00Z'),
+    });
+
+    await new EmailService().sendBookingReceived({ id: 'booking-1' });
+
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    const mail = sendMail.mock.calls[0][0];
+    expect(mail.subject).toBe('Booking Received — Payment Required — RIC-2026-00001');
+    expect(mail.text).toContain('not confirmed yet');
+    expect(mail.text).toContain("We're holding this slot for you until");
+    expect(mail.subject).not.toContain('Confirmed');
+    expect(db.notification.createMany.mock.calls[0][0].data[0].dedupeKey).toBe(
+      'email:booking-received:booking-1',
+    );
+  });
+
+  it('shows the full time range of a multi-hour booking', async () => {
+    const lane = { name: 'Lane 1' };
+    db.booking.findUnique.mockResolvedValue({
+      ...bookingForEmail('CONFIRMED'),
+      items: [
+        { slotId: 'slot-1', slot: { date: new Date('2026-11-20'), startTime: '10:00', endTime: '11:00', lane } },
+        { slotId: 'slot-2', slot: { date: new Date('2026-11-20'), startTime: '11:00', endTime: '12:00', lane } },
+      ],
+    });
+
+    await new EmailService().sendBookingConfirmation({ id: 'booking-1' });
+
+    expect(sendMail.mock.calls[0][0].text).toContain('Time: 10:00 – 12:00');
+  });
+
   it('escapes user-supplied text in HTML emails', async () => {
     db.booking.findUnique.mockResolvedValue(bookingForEmail());
 
@@ -424,6 +479,82 @@ describe('Transactional emails', () => {
 
     expect(sendMail.mock.calls[0][0].html).not.toContain('<script>');
     expect(sendMail.mock.calls[0][0].html).toContain('&lt;script&gt;');
+  });
+});
+
+// ── Account deactivation ───────────────────────────────────────────────────
+describe('Account deactivation', () => {
+  const future = { date: new Date('2099-01-10'), startTime: '10:00' };
+  const past = { date: new Date('2020-01-10'), startTime: '10:00' };
+
+  beforeEach(() => {
+    db.user.update.mockImplementation(({ data }: any) =>
+      Promise.resolve({ id: users.alice.id, email: users.alice.email, role: 'CUSTOMER', ...data }),
+    );
+    db.refreshToken.deleteMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('rejects requests from a deactivated account even with a valid token', async () => {
+    db.user.findUnique.mockResolvedValue({ ...users.alice, status: 'INACTIVE' });
+
+    const res = await request(app).get('/api/bookings/my').set('Authorization', tokenFor(users.alice));
+
+    expect(res.status).toBe(401);
+    expect(res.body.message).toBe('This account has been deactivated');
+  });
+
+  it('stores INACTIVE, revokes refresh tokens and cancels only upcoming bookings', async () => {
+    db.booking.findMany.mockResolvedValue([
+      { id: 'booking-up', bookingRef: 'RIC-UP', items: [{ slot: future }] },
+      { id: 'booking-past', bookingRef: 'RIC-PAST', items: [{ slot: past }] },
+    ]);
+    db.booking.findFirst.mockResolvedValue(makeBooking({ id: 'booking-up', bookingRef: 'RIC-UP' }));
+    db.booking.updateMany.mockResolvedValue({ count: 1 });
+    db.booking.findUniqueOrThrow.mockResolvedValue(makeBooking({ status: 'CANCELLED' }));
+
+    const res = await request(app)
+      .patch(`/api/admin/users/${users.alice.id}/status`)
+      .set('Authorization', tokenFor(users.admin))
+      .send({ status: 'INACTIVE' });
+    await flush();
+
+    expect(res.status).toBe(200);
+    expect(db.user.update.mock.calls[0][0].data.status).toBe('INACTIVE');
+    expect(db.user.update.mock.calls[0][0].data.deactivatedAt).toBeInstanceOf(Date);
+    expect(db.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: users.alice.id } });
+    expect(res.body.data.user.status).toBe('INACTIVE');
+    expect(res.body.data.cancelledBookings).toEqual(['RIC-UP']);
+    // The past booking was never touched
+    expect(db.booking.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.booking.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: 'CANCELLED',
+      cancellationReason: 'Account deactivated',
+    });
+  });
+
+  it('reactivates without touching bookings', async () => {
+    const res = await request(app)
+      .patch(`/api/admin/users/${users.alice.id}/status`)
+      .set('Authorization', tokenFor(users.admin))
+      .send({ status: 'ACTIVE' });
+
+    expect(res.status).toBe(200);
+    expect(db.user.update.mock.calls[0][0].data).toEqual({ status: 'ACTIVE', deactivatedAt: null });
+    expect(db.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not let admins deactivate themselves or customers call it', async () => {
+    const self = await request(app)
+      .patch(`/api/admin/users/${users.admin.id}/status`)
+      .set('Authorization', tokenFor(users.admin))
+      .send({ status: 'INACTIVE' });
+    expect(self.status).toBe(400);
+
+    const customer = await request(app)
+      .patch(`/api/admin/users/${users.bob.id}/status`)
+      .set('Authorization', tokenFor(users.alice))
+      .send({ status: 'INACTIVE' });
+    expect(customer.status).toBe(403);
   });
 });
 

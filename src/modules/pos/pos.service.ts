@@ -8,6 +8,7 @@ import { EQUIPMENT_FEE } from '../../utils/pricing';
 import { buildPaginationMeta, PaginationParams } from '../../utils/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SLOT_STARTED_MESSAGE } from '../bookings/bookings.service';
+import { checkDiscountCode, claimDiscountUse } from '../discounts/discounts.service';
 import { hasSlotStarted } from '../../utils/businessTime';
 
 const notificationsService = new NotificationsService();
@@ -394,24 +395,13 @@ export class PosService {
     let discountCodeRecord = null;
 
     if (discountCode?.trim()) {
-      const record = await prisma.discountCode.findUnique({
-        where: { code: discountCode.trim().toUpperCase() },
-      });
-
       // Only a valid code may be applied (and later counted as used); an
       // unknown/expired/exhausted code must not silently price at full rate.
-      if (
-        !record ||
-        !record.isActive ||
-        record.validFrom > new Date() ||
-        record.validTo < new Date() ||
-        (record.maxUses && record.usedCount >= record.maxUses)
-      ) {
-        throw new AppError('Invalid or expired discount code', 400);
-      }
+      const check = await checkDiscountCode(discountCode, totalAmount);
+      if (!check.valid) throw new AppError(check.message, 400);
 
-      discountCodeRecord = record;
-      codeDiscountPct = record.discountPct;
+      discountCodeRecord = check.record;
+      codeDiscountPct = check.record.discountPct;
     }
 
     // Determine highest percentage discount
@@ -591,10 +581,7 @@ export class PosService {
 
         // Increment discount code usage if applicable
         if (calculation.discountCodeRecord) {
-          await tx.discountCode.update({
-            where: { id: calculation.discountCodeRecord.id },
-            data: { usedCount: { increment: 1 } },
-          });
+          await claimDiscountUse(tx, calculation.discountCodeRecord);
         }
 
         // Record payment

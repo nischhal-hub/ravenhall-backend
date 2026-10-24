@@ -11,7 +11,12 @@ export const validateDiscountCode = async (
   next: NextFunction,
 ) => {
   try {
-    const result = await discountsService.validateCode(req.body.code);
+    // `amount` (optional): booking total, so the minimum spend can be checked
+    const amount = req.body.amount == null ? NaN : Number(req.body.amount);
+    const result = await discountsService.validateCode(
+      req.body.code,
+      Number.isFinite(amount) ? amount : undefined,
+    );
     sendSuccess(res, result);
   } catch (error) {
     next(error);

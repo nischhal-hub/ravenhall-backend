@@ -68,7 +68,7 @@ export class PaymentsService {
 
       if (intent.status === "succeeded") {
         // Paid, but the webhook hasn't landed yet: confirm now instead of charging again
-        await this.markIntentSucceeded(intent.id, booking.id);
+        await this.markIntentSucceeded(intent);
         throw new AppError("This booking is already paid.", 409);
       }
       if (intent.status === "processing") {
@@ -148,7 +148,7 @@ export class PaymentsService {
     if (booking.status === "PENDING" && payment?.stripePaymentIntentId && outcome !== "paid") {
       const intent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
       if (intent.status === "succeeded") {
-        await this.markIntentSucceeded(intent.id, booking.id);
+        await this.markIntentSucceeded(intent);
         outcome = "paid";
       } else if (intent.status === "processing") {
         outcome = "processing";
@@ -170,8 +170,34 @@ export class PaymentsService {
    * Only a PENDING booking is confirmed; a payment for a booking that was
    * cancelled meanwhile (e.g. its unpaid hold expired) goes through
    * `handlePaymentForCancelledBooking`, so nobody is left charged with no booking.
+   *
+   * The booking comes from our own Payment row, never from Stripe metadata,
+   * and is only confirmed when Stripe says the intent succeeded for the full
+   * amount. (A membership intent has no booking: it must never get here.)
    */
-  async markIntentSucceeded(intentId: string, bookingId: string) {
+  async markIntentSucceeded(intent: Stripe.PaymentIntent) {
+    if (intent.status !== "succeeded") return;
+
+    const payment = await prisma.payment.findUnique({
+      where: { stripePaymentIntentId: intent.id },
+      include: { booking: { select: { id: true, finalAmount: true } } },
+    });
+    if (!payment?.booking) {
+      logger.warn(`Succeeded payment ${intent.id} is not a booking payment; nothing to confirm`);
+      return;
+    }
+
+    const bookingId = payment.booking.id;
+    const expected = toCents(payment.booking.finalAmount);
+    if (intent.amount_received < expected || intent.currency !== payment.currency) {
+      // Left PENDING for staff to look at rather than confirming an underpaid booking
+      logger.error(
+        `Payment ${intent.id} for booking ${bookingId} received ${intent.amount_received} ${intent.currency}, expected ${expected} ${payment.currency}; not confirming`,
+      );
+      return;
+    }
+
+    const intentId = intent.id;
     const confirmed = await prisma.$transaction(async (tx) => {
       // Never overwrite a refund (e.g. a webhook redelivered after we refunded)
       await tx.payment.updateMany({
@@ -275,7 +301,11 @@ export class PaymentsService {
     switch (event.type) {
       case "payment_intent.succeeded": {
         const intent = event.data.object as Stripe.PaymentIntent;
-        await this.markIntentSucceeded(intent.id, intent.metadata.bookingId);
+        // Membership checkouts share this webhook but are activated by the
+        // memberships flow. Treating them as booking payments used to confirm
+        // every PENDING booking (no bookingId => no id filter).
+        if (intent.metadata?.type === "membership") break;
+        await this.markIntentSucceeded(intent);
         break;
       }
 

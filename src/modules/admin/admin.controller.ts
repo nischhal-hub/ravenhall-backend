@@ -223,6 +223,24 @@ export const updateUserRole = async (
   }
 };
 
+export const updateUserStatus = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await adminService.updateUserStatus(
+      req.params.id,
+      req.body.status,
+      req.user!,
+      req.body.reason,
+    );
+    sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const createDiscountCode = async (
   req: Request,
   res: Response,

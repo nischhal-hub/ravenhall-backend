@@ -28,12 +28,16 @@ export const authenticate = async (
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, status: true },
     });
 
     if (!user) throw new AppError("User not found", 401);
+    // Deactivation takes effect immediately, even for unexpired tokens
+    if (user.status === "INACTIVE") {
+      throw new AppError("This account has been deactivated", 401);
+    }
 
-    req.user = user;
+    req.user = { id: user.id, email: user.email, role: user.role };
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {

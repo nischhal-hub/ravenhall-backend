@@ -15,6 +15,12 @@ enum Role {
   ADMIN
 }
 
+// INACTIVE = deactivated by an admin: can't log in, upcoming bookings cancelled
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum LaneType {
   BATTING
   BOWLING
@@ -77,6 +83,8 @@ model User {
   lastName         String
   phone            String?
   role             Role         @default(CUSTOMER)
+  status           AccountStatus @default(ACTIVE)
+  deactivatedAt    DateTime?
   isEmailVerified  Boolean      @default(false)
   emailVerifyToken String?
   resetToken       String?
@@ -266,6 +274,8 @@ model DiscountCode {
   discountPct Float
   maxUses     Int?
   usedCount   Int       @default(0)
+  // Booking total (before discounts) must be at least this; null = no minimum
+  minBookingAmount Float?
   validFrom   DateTime
   validTo     DateTime
   isActive    Boolean   @default(true)

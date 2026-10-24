@@ -1,0 +1,21 @@
+# Throwaway Postgres for the test suite: pnpm test:db:up / pnpm test:db:down.
+# Data lives in tmpfs, so every `up` starts empty and nothing persists.
+# Fixed project name: the same container from any checkout of the repo.
+name: ravenhall-test
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: ravenhall_test_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ravenhall_test
+    ports:
+      - "55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ravenhall_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

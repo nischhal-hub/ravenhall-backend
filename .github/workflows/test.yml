@@ -1,0 +1,42 @@
+# Typecheck + full test suite against a throwaway Postgres service.
+# Same steps as locally: .env.test from the example, migrations applied by the
+# Jest global setup, every DB suite starts from empty tables.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ravenhall_test
+        # Same host port as docker-compose.test.yml, so .env.test.example works as-is
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ravenhall_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run prisma:generate
+      - run: pnpm exec tsc --noEmit
+      - run: cp .env.test.example .env.test
+      - run: pnpm test

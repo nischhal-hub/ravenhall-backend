@@ -1,9 +1,20 @@
 import request from 'supertest';
 import app from '../app';
 import { prisma } from '../config/database';
+import { useTestDatabase } from './setup/database';
+import { businessToday, parseCalendarDate } from '../utils/businessTime';
 import { generateAccessToken } from '../utils/jwt';
 import bcrypt from 'bcryptjs';
 import { EQUIPMENT_FEE } from '../utils/pricing';
+
+// Real local test DB, emptied before this suite runs
+useTestDatabase();
+
+const addCalendarDays = (day: string, days: number) => {
+  const d = parseCalendarDate(day);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
 
 jest.setTimeout(45000);
 
@@ -15,7 +26,8 @@ describe('POS Module', () => {
   let testLaneId: string;
   let testSlotId: string;
   let expectedRate: number;
-  const testDate = '2026-11-20';
+  // A month ahead in the business timezone, so the slot never counts as started
+  const testDate = addCalendarDays(businessToday(), 30);
 
   beforeAll(async () => {
     // 1. Create a staff user for testing

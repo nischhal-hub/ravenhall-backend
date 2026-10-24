@@ -1,8 +1,12 @@
 import request from 'supertest';
 import app from '../app';
 import { prisma } from '../config/database';
+import { useTestDatabase } from './setup/database';
 import { generateAccessToken } from '../utils/jwt';
 import bcrypt from 'bcryptjs';
+
+// Real local test DB, emptied before this suite runs
+useTestDatabase();
 
 jest.setTimeout(45000);
 

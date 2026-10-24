@@ -1,6 +1,10 @@
 import request from "supertest";
 import app from "../app";
 import { prisma } from "../config/database";
+import { useTestDatabase } from "./setup/database";
+
+// Real local test DB, emptied before this suite runs
+useTestDatabase();
 
 beforeAll(async () => {
   // Clean test users

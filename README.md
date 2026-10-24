@@ -172,9 +172,33 @@ Bookings and reschedules onto a slot that has already started (in `BUSINESS_TIME
 pnpm run dev            # Development server with hot reload
 pnpm run build          # Compile TypeScript to dist/
 pnpm run start          # Run compiled production build
-pnpm run test           # Run tests (DB-backed suites need DATABASE_URL pointing at a disposable database)
+pnpm run test           # Run tests (needs the test database: see Tests below)
+pnpm run test:all       # Start the test database, then run all tests
+pnpm run test:db:up     # Start the throwaway test Postgres (Docker, port 55433)
+pnpm run test:db:down   # Stop it (its data is in memory and is discarded)
 pnpm run test:coverage  # Tests with coverage report
 pnpm run prisma:migrate # Run database migrations
 pnpm run prisma:seed    # Seed demo data
 pnpm run prisma:studio  # Open Prisma Studio GUI
 ```
+
+## Tests
+
+Tests never use `.env`. They load `.env.test` only, and the setup **refuses to run** unless
+`DATABASE_URL` points at `localhost` / `127.0.0.1` and the database name contains `test`, so the
+real (Neon) database can't be touched even if its URL is exported in your shell.
+
+```bash
+cp .env.test.example .env.test   # once
+pnpm test:all                    # starts the test Postgres (Docker) and runs every suite
+```
+
+- **Database suites** (`auth`, `lanes`, `pos`, `expenses-reports`) use a throwaway Postgres from
+  `docker-compose.test.yml` (in-memory, port 55433). The Jest global setup runs
+  `prisma migrate deploy` once per run; each of these suites calls `useTestDatabase()`, which
+  empties every table before the suite starts, so suites are independent of order and of earlier runs.
+- **Mocked suites** (bookings, payments, reminders, expiry, endpoints, business time) mock Prisma,
+  Stripe and SMTP and need no database. If the database isn't running they still pass; only the
+  database suites fail, with a "start it with `pnpm test:db:up`" message.
+- `.env.test` contains dummy Stripe/Cloudinary values and `EMAIL_ENABLED=false`: nothing is sent anywhere.
+- CI (`.github/workflows/test.yml`) runs the same steps against a Postgres service container.

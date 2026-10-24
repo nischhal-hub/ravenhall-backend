@@ -11,6 +11,9 @@ const config: Config = {
     "!src/**/*.d.ts",
     "!src/tests/**",
   ],
+  // Tests use .env.test only (local Postgres, guarded); see src/tests/setup
+  globalSetup: "<rootDir>/src/tests/setup/global-setup.ts",
+  setupFiles: ["<rootDir>/src/tests/setup/env.setup.ts"],
   setupFilesAfterEnv: [],
   verbose: true,
   forceExit: true,

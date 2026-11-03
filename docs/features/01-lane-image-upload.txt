@@ -1,0 +1,83 @@
+RAVENHALL - FEATURE: LANE IMAGE UPLOAD
+======================================
+
+WHAT IT IS
+Admins can attach a photo to each lane. The photo is stored on Cloudinary
+(not on our server) and the lane keeps only the image URL. The photo then shows
+on the public lanes pages and in the admin lane list.
+
+
+WHO CAN USE IT
+- Create a lane with an image ........ ADMIN only
+- Replace a lane's image (edit lane) .. ADMIN or STAFF
+- Viewing images ...................... everyone (it is just a public URL)
+
+
+API
+  POST   /api/admin/lanes        (ADMIN)          create lane (+ optional image)
+  PATCH  /api/admin/lanes/:id    (ADMIN, STAFF)   edit lane  (+ optional image)
+  DELETE /api/admin/lanes/:id    (ADMIN)          deactivates the lane
+
+Both write routes take multipart/form-data, NOT JSON:
+  image        the file (optional)
+  name, type, description, capacity, hourlyRate, isActive   (normal fields)
+
+Numbers/booleans arrive as text in multipart, so the controller converts
+capacity and hourlyRate to numbers and isActive to a boolean before saving
+(coerceLaneFields in admin.controller.ts).
+
+The saved lane has `imageUrl` (a https://res.cloudinary.com/... link).
+
+
+HOW IT WORKS
+1. multer (src/middleware/upload.middleware.ts) reads the file into memory.
+   Nothing is written to disk.
+2. The controller streams the file to Cloudinary into the folder
+   "ravenhall/lanes" (src/utils/cloudinaryUpload.ts).
+3. Cloudinary returns a secure URL; it is saved in Lane.imageUrl.
+4. When an image is REPLACED, the old one is deleted from Cloudinary.
+   This cleanup is "best effort": if it fails, the edit still succeeds.
+5. Cloudinary failures return 502 "Image upload failed".
+
+
+RULES / LIMITS
+- Max file size: 5 MB
+- Allowed types: JPEG, PNG, WEBP, GIF (images only). PDFs are rejected.
+  Expense receipts use a separate filter that also allows PDF.
+- Wrong type returns 400: "Only JPEG, PNG, WEBP or GIF images are allowed"
+- Deleting a lane is a SOFT delete (isActive = false). Its image stays on
+  Cloudinary.
+
+
+SETUP (backend .env)
+  CLOUDINARY_CLOUD_NAME=...
+  CLOUDINARY_API_KEY=...
+  CLOUDINARY_API_SECRET=...
+The server refuses to start if any of the three is missing
+(src/config/cloudinary.ts).
+
+Frontend: next.config.ts already allows images from res.cloudinary.com
+(images.remotePatterns), which Next/Image requires.
+
+
+FRONTEND
+- components/modals/lane/add-lane.tsx   file picker + live preview, creates lane
+- components/modals/lane/edit-lane.tsx  replace the image
+- app/admin/(layout)/lanes/             lane table and lane detail page
+
+
+FILES
+  Backend
+    src/middleware/upload.middleware.ts   multer (uploadLaneImage)
+    src/config/cloudinary.ts              Cloudinary client
+    src/utils/cloudinaryUpload.ts         upload + delete helpers
+    src/modules/admin/admin.controller.ts createLane / updateLane
+    src/modules/admin/admin.service.ts    updateLane (removes old image)
+    src/modules/admin/admin.routes.ts     routes + role checks
+    prisma/schema.prisma                  Lane.imageUrl
+
+
+KNOWN LIMITATIONS
+- Images are not resized or compressed on upload. Large photos are only
+  limited by the 5 MB cap.
+- There is no way to remove an image without replacing it.

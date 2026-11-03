@@ -7,11 +7,13 @@ import { useTestDatabase } from "./setup/database";
 useTestDatabase();
 
 beforeAll(async () => {
-  // Clean test users
+  // Clean test users (expenses reference users via FK)
+  await prisma.expense.deleteMany({ where: { createdBy: { email: { contains: "@test-suite.com" } } } });
   await prisma.user.deleteMany({ where: { email: { contains: "@test-suite.com" } } });
 });
 
 afterAll(async () => {
+  await prisma.expense.deleteMany({ where: { createdBy: { email: { contains: "@test-suite.com" } } } });
   await prisma.user.deleteMany({ where: { email: { contains: "@test-suite.com" } } });
   await prisma.$disconnect();
 });

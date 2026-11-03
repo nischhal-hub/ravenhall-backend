@@ -22,6 +22,9 @@ describe('Expenses & Revenue Reporting Module', () => {
   const createdCategoryIds: string[] = [];
 
   beforeAll(async () => {
+    await prisma.expense.deleteMany({
+      where: { createdBy: { email: { contains: '@test-suite.com' } } },
+    });
     const hashedPassword = await bcrypt.hash('Admin@123456', 10);
 
     // 1. Create or get test admin
@@ -79,6 +82,11 @@ describe('Expenses & Revenue Reporting Module', () => {
         where: { id: { in: createdCategoryIds } },
       });
     }
+
+    // Clean up any expenses left by test users (FK to User)
+    await prisma.expense.deleteMany({
+      where: { createdBy: { email: { contains: '@test-suite.com' } } },
+    });
 
     // Clean up test users
     await prisma.user.deleteMany({

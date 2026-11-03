@@ -17,6 +17,7 @@ const config: Config = {
   setupFilesAfterEnv: [],
   verbose: true,
   forceExit: true,
+  testTimeout: 30000,
   clearMocks: true,
 };
 

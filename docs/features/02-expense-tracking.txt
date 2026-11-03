@@ -1,0 +1,104 @@
+RAVENHALL - FEATURE: EXPENSE TRACKING & PROFIT REPORTS
+======================================================
+
+WHAT IT IS
+Admins record what the centre spends (rent, utilities, wages, equipment...)
+with an optional receipt photo. The reports module then puts expenses next to
+booking/membership revenue so the owner can see net profit.
+
+
+WHO CAN USE IT
+ADMIN only. Every expense, category and report route is behind
+authenticate + requireRole('ADMIN').
+
+
+DATA
+  ExpenseCategory  name (unique), description, isDefault
+  Expense          title, amount, category, description, expenseDate,
+                   paymentMethod (STRIPE | CASH | CARD | BANK_TRANSFER | OTHER),
+                   receiptUrl + receiptPublicId, createdBy (the admin)
+
+Default categories (isDefault = true), created automatically the first time
+categories are listed if none exist:
+  Rent, Utilities, Ground Maintenance, Equipment Maintenance,
+  Salaries & Wages, Office Supplies & IT, Marketing & Advertising,
+  Insurance & Licenses, Miscellaneous
+
+Sample data: `pnpm prisma:seed:expenses`
+
+
+API - EXPENSES
+  POST   /api/expenses          create (multipart, optional "receipt" file)
+  GET    /api/expenses          list with filters + pagination
+  GET    /api/expenses/summary  totals and breakdowns
+  GET    /api/expenses/:id
+  PATCH  /api/expenses/:id      edit (optional new receipt)
+  DELETE /api/expenses/:id      delete (also deletes the receipt file)
+
+  List filters (query): page, limit (max 100, default 15), search,
+    categoryId, paymentMethod, from, to, sortBy (expenseDate | amount | title |
+    createdAt), order (asc | desc). "ALL" is treated as "no filter".
+    `from` must not be after `to`.
+
+  Summary (query): from, to, categoryId, groupBy (day | week | month | year).
+  Returns: total, count, byCategory (with % share), byPaymentMethod, timeline.
+
+API - CATEGORIES
+  POST/GET /api/expense-categories,  GET/PATCH/DELETE /api/expense-categories/:id
+  A category that still has expenses CANNOT be deleted (400, with the count).
+  Category names are unique.
+
+Rules on create/update
+  - amount must be > 0 and is rounded to 2 decimals
+  - category must exist (404 otherwise)
+  - expenseDate defaults to now; invalid dates are rejected
+  - paymentMethod defaults to OTHER
+  - multipart sends numbers as text, so amount is parsed from a string
+
+
+RECEIPTS
+Same pipeline as lane images: multer (5 MB, JPEG/PNG/WEBP/GIF/PDF) -> Cloudinary
+folder "ravenhall/expenses". Replacing or deleting an expense removes the old
+receipt from Cloudinary (best effort).
+
+
+API - REVENUE / PROFIT REPORTS (ADMIN)
+  GET /api/reports           full report
+  GET /api/reports/summary   headline numbers only
+  GET /api/reports/trends    period-over-period growth
+  (also reachable under /api/reports/revenue)
+  Query: from, to, and groupBy (report) or interval (trends) = day|week|month|year
+
+  Report contains:
+    summary ............ gross revenue, refunds, net revenue, total expenses,
+                         net profit, profit margin %, booking count
+    revenueBySource .... online bookings / POS bookings / memberships
+    revenueByPaymentMethod
+    expensesByCategory
+    timeline ........... per period: revenue, expenses, net profit, margin %
+    recentTransactions . latest revenues and expenses
+  Trends add revenueGrowthPct and expenseGrowthPct versus the previous period.
+
+
+FRONTEND
+  app/admin/(layout)/expenses/          expenses page
+  components/expenses/expense-table.tsx
+  components/expenses/expense-form-dialog.tsx    add/edit + receipt upload
+  components/expenses/manage-categories-dialog.tsx
+  app/admin/(layout)/reports/           revenue vs expense charts
+
+
+FILES
+  Backend
+    src/modules/expenses/   routes, controller, service, validation (zod), types
+    src/modules/reports/    routes, controller, service, validation, types
+    prisma/schema.prisma    Expense, ExpenseCategory
+    prisma/seed-expenses.ts
+    src/tests/expenses-reports.test.ts
+
+
+KNOWN LIMITATIONS
+- Admin only: staff cannot log expenses.
+- Expenses are not linked to a lane or booking.
+- No recurring expenses (rent has to be entered each month).
+- Receipts can be PDFs; the frontend should not assume an <img>.

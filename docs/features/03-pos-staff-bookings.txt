@@ -1,0 +1,113 @@
+RAVENHALL - FEATURE: POS (POINT OF SALE) FOR IN-PERSON BOOKINGS
+===============================================================
+
+WHAT IT IS
+A staff screen at the front desk for customers who walk in. Staff pick the
+customer, pick lanes and times, apply a discount if needed, take payment
+(cash, card, etc.) and print a receipt - without the customer using the website.
+
+
+WHO CAN USE IT
+STAFF and ADMIN. All /api/pos routes require login and one of those roles.
+Bookings made here are tagged source = POS and bookedById = the staff member,
+so reports can separate them from online bookings.
+
+
+THE FLOW
+1. Find or add the customer
+     - search existing customers (name/email/phone)
+     - or add a walk-in customer (first name, last name, optional email/phone)
+     - or continue as "Guest" (no details)
+2. View the lane/slot grid for a date and choose one or more slots
+3. Price check (calculate-price) - shows the discount breakdown
+4. Create the booking with a payment method
+     - paid now  -> booking CONFIRMED, payment SUCCEEDED
+     - pay later -> booking PENDING, payment PENDING; collect later via /pay
+5. Show / print the receipt
+
+
+API (all under /api/pos)
+  GET   /customers?search=         search customers
+  POST  /customers                 create walk-in customer
+  GET   /customers/:id             customer detail
+  GET   /lanes-and-slots?date=YYYY-MM-DD[&laneId=]   availability grid
+  POST  /calculate-price           price + discount breakdown
+  POST  /bookings                  create booking (+ payment record)
+  GET   /bookings                  list POS bookings (filters)
+  GET   /bookings/:id              one booking
+  GET   /bookings/:id/receipt      receipt data
+  POST  /bookings/:id/pay          collect payment on a pending booking
+
+Create booking body (main fields)
+  slotIds[]  (or slotId)          required
+  customerId | customer{...} | isGuest:true     one of these required
+  paymentMethod                   CASH | CARD | STRIPE | BANK_TRANSFER | OTHER
+  paymentStatus                   SUCCEEDED (default) | PENDING
+  discountCode, customDiscountPct (0-100), customDiscountAmount, discountReason
+  notes
+
+
+CUSTOMER HANDLING
+- Existing customerId ............ used as is.
+- New customer details ........... if the email already exists, that account is
+                                   reused (phone added if missing); otherwise a
+                                   walk-in account is created.
+- Guest .......................... a throwaway account "Walk-in Guest" with an
+                                   address like guest_<time>@guest.ravenhall.com
+                                   and a random password.
+No confirmation email is sent to guest addresses.
+
+
+PRICING RULES (src/modules/pos/pos.service.ts -> calculatePrice)
+- Lane hire = sum of each slot's lane hourly rate.
+- A flat $10 equipment fee (src/utils/pricing.ts) is added once per booking -
+  the same as online bookings. Discounts never apply to the fee.
+- Percentage discount = the HIGHEST of: member plan %, discount-code %, staff
+  custom %, applied to lane hire. They do not add together.
+- Then an optional flat staff discount (customDiscountAmount) is taken off lane
+  hire.
+- Total discount can never exceed lane hire; final amount never below the fee.
+- calculate-price returns laneHire, equipmentFee, totalAmount (= both),
+  discountBreakdown and finalAmount. The receipt shows lane hire and equipment
+  fee separately (equipmentFee is 0 on older bookings made before the fee).
+- Membership is looked up for the chosen customer (active, not expired).
+- Discount codes are checked for active flag, valid dates and max uses; the
+  code's usedCount goes up when a booking uses it.
+- discountReason is saved into the booking notes with "POS Booking [METHOD]".
+
+
+SAFETY
+- Slots on the same lane and day must be back-to-back (no gaps), otherwise 400.
+  Different lanes or days in one booking are allowed (e.g. a group taking two
+  lanes).
+- Slots are claimed with ONE conditional update inside the database
+  transaction (only still-free slots match), so two staff booking the same slot
+  at the same instant cannot both succeed - the loser gets 409.
+- Cancelled bookings cannot be paid; already-paid confirmed bookings cannot be
+  paid twice.
+- A confirmation email is sent after payment (not for guests); an email
+  failure never fails the booking.
+
+
+FRONTEND
+  app/pos/page.tsx, app/admin/(layout)/pos/page.tsx   the terminal
+  components/pos/pos-terminal.tsx            main layout
+  components/pos/pos-customer-selector.tsx   search / add / guest
+  components/pos/pos-slot-grid.tsx           lane x time grid
+  components/pos/pos-cart-panel.tsx          selected slots, discounts, totals
+  components/pos/pos-collect-payment-modal.tsx
+  components/pos/pos-receipt-modal.tsx
+  components/pos/pos-transactions-table.tsx  today's / past POS bookings
+
+
+FILES
+  Backend
+    src/modules/pos/   routes, controller, service, validation (zod)
+    prisma/schema.prisma   Booking.source (ONLINE | POS), Booking.bookedById,
+                           Payment.paymentMethod
+    src/tests/pos.test.ts
+
+
+KNOWN LIMITATIONS
+- No refund or cancel route under /pos; use the normal booking cancel.
+- There is no maximum number of hours per POS booking (online is capped at 3).

@@ -1,0 +1,107 @@
+RAVENHALL - FEATURE: "ASK RAVENHALL" AI CHATBOT
+===============================================
+
+(Full developer guide: ravenhall-frontend/CHATBOT.md. This is the summary.)
+
+WHAT IT IS
+A chat button in the bottom-right of the customer website (landing pages and
+customer panel). Customers type in plain English and the assistant can:
+
+  - describe the lanes and prices
+  - find free times ("any batting lane free tomorrow evening?")
+  - start a booking (opens the normal booking page with date + slot chosen)
+  - explain membership plans
+  - show the customer's own bookings and membership (login required)
+  - cancel a booking - ONLY after the customer presses a Confirm button
+  - link/open the right page ("where do I see my bookings?")
+
+It never takes payment and never books or cancels on its own. A person always
+presses a button. It politely refuses topics unrelated to Ravenhall.
+It is hidden on login/register pages and the admin area.
+
+
+HOW IT WORKS
+  Browser chat window --(message)--> Next.js route /api/chat --> Google Gemini
+        ^                                  (holds the secret key)      |
+        |                                                              |
+        +------ Gemini asks to run a "tool" (e.g. getAvailability) <---+
+        |
+        +--> tool runs IN THE BROWSER, calling our normal API as the logged-in
+             customer, and the result goes back to Gemini to write the answer.
+
+Why tools run in the browser: they reuse the customer's existing login, so the
+assistant can never see or do more than the customer could do themselves.
+
+Tools: searchLanes, getAvailability, getMembershipPlans, getMyMembership,
+getMyBookings, navigate, proposeBooking, proposeCancelBooking.
+
+The "Review & pay" and "Confirm cancel" cards are filled from real API data,
+not text written by the AI, so a made-up price or time cannot appear on a card.
+
+
+BACKEND PART
+One new PUBLIC endpoint:
+  GET /api/lanes/availability?date=YYYY-MM-DD[&type=BATTING]
+- Returns each active lane with only its free, unblocked slots for that date.
+- For today it hides slots that have already started, using the centre
+  timezone (CENTRE_TIMEZONE, default Australia/Perth).
+- Validates date format and lane type (400 on bad input).
+- Declared before "/:id" in lanes.routes.ts so "availability" is not read as
+  a lane id.
+Code: src/modules/lanes/lanes.service.ts (getAvailability), tests in
+src/tests/lanes.test.ts.
+
+
+FRONTEND FILES
+  app/api/chat/route.ts               server route, Gemini call, rate limits
+  lib/chatbot/system-prompt.ts        personality + rules (edit to change tone)
+  lib/chatbot/tools.ts                tool definitions
+  lib/chatbot/routes.ts               pages the assistant may link to
+  components/chatbot/chatbot.tsx      chat window, runs the tools
+  components/chatbot/tool-handlers.ts backend calls for each tool
+  components/chatbot/proposal-cards.tsx  booking / cancel cards
+  components/chatbot/message-text.tsx    turns [Label](/path) into buttons
+  app/(customer)/layout.tsx           mounts the chat on customer pages
+  Booking page (lanes/[id]) accepts ?date=YYYY-MM-DD&slotId=... to pre-select
+
+
+SETUP
+1. Get a Gemini API key (Google AI Studio).
+2. Put it in ravenhall-frontend/.env.local (git-ignored):
+       GOOGLE_GENERATIVE_AI_API_KEY=your-key
+   DO NOT put it in .env - that file is tracked by git.
+3. Restart `pnpm dev`; make sure the backend is running.
+
+Optional: GEMINI_MODEL, GEMINI_THINKING_LEVEL (minimal|low|medium|high),
+CENTRE_TIMEZONE (set on the backend as well).
+
+Packages added (frontend): ai, @ai-sdk/react, @ai-sdk/google
+
+
+SAFETY AND LIMITS
+- API key stays on the server.
+- Only pages on the allow-list can be opened or linked.
+- /api/chat limits: 40 requests/minute per IP, 1000 characters per message,
+  last 30 messages kept.
+- Instructions hidden inside data (e.g. a lane description) are ignored.
+- Guests can chat; personal tools need login, otherwise the assistant offers
+  the login page.
+
+
+COMMON PROBLEMS
+  503 "not configured"            key missing or dev server not restarted
+  "model no longer available"     set GEMINI_MODEL to a current model
+  429 too many requests           wait a minute
+  slow replies                    GEMINI_THINKING_LEVEL=minimal, or a lite model
+  no free slots                   slots are generated 30 days ahead by a nightly
+                                  job (src/jobs/slotGeneration.job.ts)
+
+
+KNOWN LIMITATIONS
+- Final price (equipment fee, discounts) is shown at checkout; the assistant
+  only quotes the hourly rate.
+- Chat history is cleared on a full page reload.
+- Opening hours: the About page says 6 AM-10 PM but slots are generated 7 AM-
+  10 PM. The assistant relies on real availability.
+- Booking access: GET /api/bookings/:id only returns the caller's own booking
+  (staff/admin can read any); DELETE /api/bookings/:id is admin-only.

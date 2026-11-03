@@ -23,7 +23,9 @@ const router: ExpressRouter = Router();
 
 router.use(authenticate);
 
-router.post('/', validate(createBookingSchema), createBooking);
+// Unpaid booking that holds its slots: staff only. Customers book through
+// POST /payments/checkout, so their booking is only created once it is paid.
+router.post('/', requireRole('ADMIN', 'STAFF'), validate(createBookingSchema), createBooking);
 router.get('/', requireRole('ADMIN', 'STAFF'), getAllBookings);
 
 router.get('/my', getMyBookings);

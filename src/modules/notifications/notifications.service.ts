@@ -97,6 +97,19 @@ export class NotificationsService {
     );
   }
 
+  /** Paid at checkout, but the slot was gone by then, so no booking was made */
+  async createCheckoutRefunded(userId: string, paymentIntentId: string, db: Db = prisma) {
+    return this.createInApp(
+      {
+        userId,
+        title: "Payment refunded",
+        body: "Your payment went through, but the slot you chose was no longer available, so no booking was made and we refunded the full amount. Please choose another time.",
+        dedupeKey: `checkout-refund:${paymentIntentId}`,
+      },
+      db,
+    );
+  }
+
   /**
    * Booking confirmed event: in-app notification + confirmation email.
    * Call after the confirming transaction commits. Never throws.

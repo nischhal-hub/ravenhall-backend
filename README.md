@@ -39,15 +39,17 @@ pnpm run dev
 | GET | /api/lanes | List all active lanes | No |
 | GET | /api/lanes/:id | Get lane by ID | No |
 | GET | /api/lanes/:id/slots?date= | Get slots for lane | No |
-| POST | /api/bookings | Create booking | Customer |
+| POST | /api/bookings | Create an unpaid `PENDING` booking that holds its slots (customers use `/api/payments/checkout`) | Admin/Staff |
 | GET | /api/bookings/my | My bookings | Customer |
 | GET | /api/bookings/:id | Get booking (own only; any for staff). Unpaid online bookings include `holdExpiresAt` | Customer |
 | PATCH | /api/bookings/:id/cancel | Cancel own booking (body: `{ reason? }`) | Customer |
 | GET | /api/notifications/my | In-app notifications + `unreadCount` | Yes |
 | PATCH | /api/notifications/:id/read | Mark one as read | Yes |
 | PATCH | /api/notifications/read-all | Mark all as read | Yes |
-| POST | /api/payments/intent | Create Stripe intent | Customer |
-| POST | /api/payments/confirm | Check a booking's payment with Stripe after checkout (body: `{ bookingId }`) | Customer |
+| POST | /api/payments/checkout | Start paying for a new booking (body: `{ slotId, duration?, discountCode? }`). Nothing is booked until it is paid | Customer |
+| POST | /api/payments/checkout/confirm | After Stripe: creates the booking if paid (body: `{ paymentIntentId }`); outcome `paid`, `processing`, `failed`, `unpaid` or `refunded` | Customer |
+| POST | /api/payments/intent | Create Stripe intent for an existing `PENDING` booking (e.g. POS "pay at the counter") | Customer |
+| POST | /api/payments/confirm | Check an existing booking's payment with Stripe after checkout (body: `{ bookingId }`) | Customer |
 | POST | /api/payments/webhook | Stripe webhook | Stripe |
 | GET | /api/memberships | List plans | No |
 | GET | /api/memberships/my | My membership | Customer |
@@ -134,9 +136,24 @@ Customers get an in-app notification and an email `REMINDER_LEAD_MINUTES` (defau
   and for POS walk-in guests. A missing email address still gets the in-app notification.
 - A failed email is recorded as `FAILED` and retried by later runs for up to 15 minutes, never after the session starts.
 
+#### Online checkout (pay first, then book)
+
+A customer's booking is only created once its payment has succeeded:
+
+- `POST /api/payments/checkout` checks the slots and prices the session (membership or promo code, whichever
+  is better, on lane hire only), then creates a Stripe PaymentIntent (metadata `type: booking_checkout`, with
+  the slots and price) and a `PENDING` payment with no booking. No booking exists and no slot is held yet.
+- When the payment succeeds (webhook `payment_intent.succeeded`, or the return page calling
+  `/api/payments/checkout/confirm`), the slots are claimed and the booking is created as `CONFIRMED` in one
+  transaction. The payment row is the lock, so the webhook and the return page create it once.
+- If the slots were taken or have started while the customer was paying, nothing is booked and the payment
+  is refunded once (`refund-checkout-<paymentIntentId>`), with an in-app notification.
+- POS bookings are unchanged.
+
 #### Unpaid-hold expiry
 
-An online booking holds its slot while the customer pays. If it is still `PENDING` `UNPAID_HOLD_MINUTES`
+Applies to `PENDING` online bookings made before checkout worked this way, and to staff-created ones
+(`POST /api/bookings`). An online booking holds its slot while the customer pays. If it is still `PENDING` `UNPAID_HOLD_MINUTES`
 (default 15) after it was created, the job releases it:
 
 - Stripe is checked first: if the payment actually succeeded the booking is confirmed instead; if Stripe is

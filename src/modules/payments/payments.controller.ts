@@ -24,6 +24,35 @@ export const createPaymentIntent = async (
   }
 };
 
+export const startCheckout = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await paymentsService.startCheckout(req.user!.id, req.body);
+    sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const confirmCheckout = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const result = await paymentsService.confirmCheckout(
+      req.user!.id,
+      req.body.paymentIntentId,
+    );
+    sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const confirmPayment = async (
   req: AuthRequest,
   res: Response,

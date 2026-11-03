@@ -56,14 +56,17 @@ const assertTransition = (from: BookingStatus, to: BookingStatus) => {
   );
 };
 
+export type OnlineBookingRequest = { slotId: string; duration?: number; discountCode?: string };
+
 export class BookingsService {
-  async createBooking(
-    userId: string,
-    data: { slotId: string; duration?: number; discountCode?: string },
-  ) {
+  /**
+   * Checks that an online booking can be made and prices it, without claiming
+   * anything. Used by checkout (the booking itself is only created once it is
+   * paid, see PaymentsService.completeCheckout) and by staff createBooking.
+   */
+  async quoteOnlineBooking(userId: string, data: OnlineBookingRequest) {
     const duration = data.duration ?? 1;
 
-    // All reads outside the transaction
     const startSlot = await prisma.timeSlot.findUnique({
       where: { id: data.slotId },
       include: { lane: true },
@@ -100,9 +103,29 @@ export class BookingsService {
         discountPct = check.record.discountPct;
       }
     }
-    const discountAmount = (laneHire * discountPct) / 100;
-    const finalAmount = totalAmount - discountAmount;
-    const itemSubtotal = unitPrice - (unitPrice * discountPct) / 100;
+    const discountAmount = round2((laneHire * discountPct) / 100);
+    const finalAmount = round2(totalAmount - discountAmount);
+    const itemSubtotal = round2(unitPrice - (unitPrice * discountPct) / 100);
+
+    return {
+      slots,
+      unitPrice,
+      totalAmount,
+      discountPct,
+      discountAmount,
+      finalAmount,
+      itemSubtotal,
+      discountCodeRecord,
+    };
+  }
+
+  /**
+   * Staff only: creates an unpaid PENDING booking that holds its slots.
+   * Customers go through checkout instead, so their bookings only exist once paid.
+   */
+  async createBooking(userId: string, data: OnlineBookingRequest) {
+    const { slots, unitPrice, totalAmount, discountAmount, finalAmount, itemSubtotal, discountCodeRecord } =
+      await this.quoteOnlineBooking(userId, data);
 
     // Transaction: only fast atomic writes, no includes
     const bookingId = await prisma.$transaction(

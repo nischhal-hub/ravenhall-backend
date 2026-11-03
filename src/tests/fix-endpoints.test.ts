@@ -242,7 +242,16 @@ describe('Slots that have already started', () => {
   afterEach(() => jest.useRealTimers());
 
   it('rejects booking a slot that started 5 minutes ago with 422', async () => {
-    const res = await request(app).post('/api/bookings').set('Authorization', bearer(customer)).send({ slotId: slot.id });
+    const res = await request(app)
+      .post('/api/payments/checkout')
+      .set('Authorization', bearer(customer))
+      .send({ slotId: slot.id });
+    expect(res.status).toBe(422);
+    expect(res.body.message).toBe(SLOT_STARTED_MESSAGE);
+  });
+
+  it('applies the same rule to staff bookings', async () => {
+    const res = await request(app).post('/api/bookings').set('Authorization', bearer(staff)).send({ slotId: slot.id });
     expect(res.status).toBe(422);
     expect(res.body.message).toBe(SLOT_STARTED_MESSAGE);
   });
